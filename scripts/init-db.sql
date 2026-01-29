@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
   -- pgcrypto: Cryptographic functions
   -- Why: We need gen_random_uuid() for generating unique IDs
   -- Alternative: Use Python's uuid4(), but DB-generated is faster
-EVENT STORE (Write Side)
+
 -- EVENT STORE (Write Side)
 -- the SINGLE SOURCE OF TRUTH for all state changes
 CREATE TABLE events (
@@ -24,6 +24,7 @@ CREATE TABLE events (
       event_type VARCHAR(100) NOT NULL,
        -- Extra info: who triggered it, IP address, request ID
       -- Useful for debugging and audit trails
+      event_data JSONB NOT NULL,
       metadata JSONB DEFAULT '{}',
       -- VERSION NUMBER - Critical for optimistic concurrency!
       -- Increments with each event for this aggregate
@@ -151,12 +152,10 @@ CREATE TABLE events (
  -- PostgreSQL automatically calculates:
   -- remaining_amount = 1000 - 850 = 150
   -- percentage_used = 850/1000 * 100 = 85.00
-
   -- No application code needed!
+
     -- GDPR COMPLIANCE
   -- Required for any European financial application
-  -- =============================================================================
-
   -- User consent records (GDPR Article 7)
   CREATE TABLE user_consents (
       id BIGSERIAL PRIMARY KEY,
@@ -191,3 +190,24 @@ CREATE TABLE events (
       ip_address INET,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+    SELECT create_hypertable('audit_log', 'created_at');
+ -- INDEXES (Speed up common queries)
+  -- Find all events for an aggregate (rebuilding state)
+  CREATE INDEX idx_events_aggregate
+      ON events (aggregate_type, aggregate_id, version);
+
+  -- Dashboard: "Show my transactions from last month"
+  CREATE INDEX idx_daily_agg_user_date
+      ON daily_aggregates (user_id, date DESC);
+
+  -- Budget page: "Show my current month's budgets"
+  CREATE INDEX idx_budget_user_month
+      ON budget_status (user_id, month DESC);
+
+  -- GDPR: "Find all consents for a user"
+  CREATE INDEX idx_consents_user
+      ON user_consents (user_id);
+
+  -- Audit: "What did this user do?"
+  CREATE INDEX idx_audit_user
+      ON audit_log (user_id, created_at DESC);
