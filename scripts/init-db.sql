@@ -211,3 +211,25 @@ CREATE TABLE events (
   -- Audit: "What did this user do?"
   CREATE INDEX idx_audit_user
       ON audit_log (user_id, created_at DESC);
+    -- Index for finding events by type (analytics)
+  CREATE INDEX idx_events_type
+      ON events (event_type, created_at DESC);
+
+  -- Auto-update updated_at timestamps
+  CREATE OR REPLACE FUNCTION update_updated_at_column()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+  END;
+  $$ language 'plpgsql';
+
+  CREATE TRIGGER update_account_projections_updated_at
+      BEFORE UPDATE ON account_projections
+      FOR EACH ROW
+      EXECUTE FUNCTION update_updated_at_column();
+
+  CREATE TRIGGER update_budget_status_updated_at
+      BEFORE UPDATE ON budget_status
+      FOR EACH ROW
+      EXECUTE FUNCTION update_updated_at_column();
