@@ -7,7 +7,7 @@
 
   WORKDIR /app
 
-  # Install build tools (needed for some Python packages)
+  # Install build tools 
   RUN apt-get update && apt-get install -y \
       build-essential \
       libpq-dev \
@@ -24,17 +24,18 @@
 
   WORKDIR /app
 
-  # Only runtime dependencies (no compilers!)
-  RUN apt-get update && apt-get install -y \
+  # Only runtime dependencies 
+    RUN apt-get update && apt-get install -y \
       libpq5 \
+      curl \
       && rm -rf /var/lib/apt/lists/* \
       && useradd --create-home appuser
 
-  # Copy installed packages from builder
+  # CP installed packages from builder
   COPY --from=builder /root/.local /home/appuser/.local
   ENV PATH=/home/appuser/.local/bin:$PATH
 
-  # Copy application code
+  # CP application code
   COPY --chown=appuser:appuser src/ ./src/
 
   # Run as non-root user (security best practice)
