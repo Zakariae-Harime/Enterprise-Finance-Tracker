@@ -233,3 +233,101 @@ CREATE TABLE events (
       BEFORE UPDATE ON budget_status
       FOR EACH ROW
       EXECUTE FUNCTION update_updated_at_column();
+
+     -- Organizations (multi-tenant)
+  CREATE TABLE organizations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(255) NOT NULL,
+      slug VARCHAR(100) UNIQUE NOT NULL,  -- "techstartup-as"
+      plan VARCHAR(50) DEFAULT 'free',     -- 'free', 'pro', 'enterprise'
+      settings JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Departments within organization
+  CREATE TABLE departments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      name VARCHAR(255) NOT NULL,
+      budget_monthly DECIMAL(15, 2),
+      parent_department_id UUID,  -- For hierarchy
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Projects (cross-department)
+  CREATE TABLE projects (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      name VARCHAR(255) NOT NULL,
+      budget_total DECIMAL(15, 2),
+      start_date DATE,
+      end_date DATE,
+      status VARCHAR(50) DEFAULT 'active'
+  );
+
+  -- Cost Centers (accounting codes)
+  CREATE TABLE cost_centers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      code VARCHAR(50) NOT NULL,  -- "CC-001"
+      name VARCHAR(255) NOT NULL,
+      budget_yearly DECIMAL(15, 2)
+  );
+
+  -- Organization members with roles
+  CREATE TABLE organization_members (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      user_id UUID NOT NULL,
+      role VARCHAR(50) NOT NULL,  -- 'owner', 'admin', 'finance', 'employee'
+      department_id UUID REFERENCES departments(id),
+      spending_limit DECIMAL(15, 2),  -- Personal spending limit
+      can_approve_up_to DECIMAL(15, 2),  -- Approval authority
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+
+      UNIQUE(organization_id, user_id)
+  );
+
+  -- Expenses (enterprise expense tracking)
+  CREATE TABLE expenses (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      submitted_by UUID NOT NULL,
+      amount DECIMAL(15, 2) NOT NULL,
+      currency VARCHAR(3) DEFAULT 'NOK',
+      category VARCHAR(100),
+      description TEXT,
+      merchant_name VARCHAR(255),
+      expense_date DATE,
+
+      -- Allocation
+      department_id UUID REFERENCES departments(id),
+      project_id UUID REFERENCES projects(id),
+      cost_center_id UUID REFERENCES cost_centers(id),
+
+      -- Approval workflow
+      status VARCHAR(50) DEFAULT 'pending',  -- 'pending', 'approved', 'rejected', 'paid'
+      approved_by UUID,
+      approved_at TIMESTAMPTZ,
+      rejection_reason TEXT,
+
+      -- Receipt/Invoice
+      receipt_url TEXT,
+      ocr_data JSONB,  -- ML-extracted data from receipt
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Approval workflow rules
+  CREATE TABLE approval_rules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      name VARCHAR(255),
+      condition_type VARCHAR(50),  -- 'amount_above', 'category', 'department'
+      condition_value JSONB,
+      approver_role VARCHAR(50),   -- Who can approve
+      auto_approve BOOLEAN DEFAULT FALSE,
+      priority INTEGER DEFAULT 0,
+
+      UNIQUE(organization_id, priority)
+  );

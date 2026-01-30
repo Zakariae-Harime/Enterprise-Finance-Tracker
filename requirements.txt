@@ -1,0 +1,32 @@
+# === Web Framework ===
+  fastapi>=0.109.0          # Async web framework (auto-generates OpenAPI docs)
+  uvicorn[standard]>=0.27.0 # ASGI server to run FastAPI
+  pydantic>=2.5.0           # Data validation using Python type hints
+
+  # === Database ===
+  asyncpg>=0.29.0           # Async PostgreSQL driver (10x faster than psycopg2)
+  sqlalchemy>=2.0.0         # ORM 
+
+  # === Kafka ===
+  aiokafka>=0.10.0          # Async Kafka client
+
+  # === ML ===
+  torch>=2.1.0              # PyTorch for BERT model
+  transformers>=4.36.0      # Hugging Face transformers (BERT)
+
+  # === Data Processing ===
+  pandas>=2.1.0             # DataFrames for aggregations
+  dagster>=1.5.0            # Pipeline orchestration
+
+  # === Utilities ===
+  python-jose[cryptography] # JWT tokens for auth
+  passlib[bcrypt]           # Password hashing
+  httpx>=0.26.0             # Async HTTP client (for GoCardless API)
+  
+  # === Azure Data Lake ===
+  azure-storage-blob>=12.19.0      # Azure Blob Storage SDK
+  azure-identity>=1.15.0           # Azure authentication
+  pyarrow>=15.0.0                  # Parquet file format (columnar, compressed)
+
+  # === Airflow Azure Provider ===
+  apache-airflow-providers-microsoft-azure>=8.5.0
