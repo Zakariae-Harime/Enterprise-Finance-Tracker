@@ -1,0 +1,7 @@
+*.log
+.data/
+.claude/
+.venv/
+PERSONAL_FINANCE_TRACKER_SKILL.md
+.vscode/
+CLAUDE.md
