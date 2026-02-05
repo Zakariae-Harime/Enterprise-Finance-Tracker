@@ -331,3 +331,193 @@ CREATE TABLE events (
 
       UNIQUE(organization_id, priority)
   );
+    -- IDEMPOTENT CONSUMER TRACKING
+  -- Ensures each event is processed exactly once per consumer
+  -- Solves: At-least-once delivery → Exactly-once processing
+   -- Connected integrations per organization
+   CREATE TABLE processed_events (
+     -- Composite primary key: same event can be processed by multiple consumers
+      -- but each consumer processes it only once
+     event_id UUID NOT NULL,
+     -- Which consumer processed this event?
+        consumer_name VARCHAR(100) NOT NULL,
+      -- Examples: 'email_service', 'analytics_service', 'fraud_detection'
+        processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- When was it processed? (for debugging and monitoring)
+        PRIMARY KEY (event_id, consumer_name)  -- Composite primary key prevents duplicates
+   );
+     -- Index for fast duplicate checks
+  -- Query: "Has email_service already processed event uuid-123?"
+    CREATE INDEX idx_processed_events_lookup
+        ON processed_events (consumer_name, event_id);
+      -- Index for monitoring: "What did email_service process today?"
+      CREATE INDEX idx_processed_events_consumer_date
+        ON processed_events (consumer_name, processed_at DESC);
+  CREATE TABLE integrations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+
+      -- Integration type
+      provider VARCHAR(50) NOT NULL,  -- 'tripletex', 'xero', 'quickbooks', 'sap'
+      name VARCHAR(255),              -- User-friendly name
+
+      -- Authentication (encrypted)
+      auth_type VARCHAR(50),          -- 'oauth2', 'api_key', 'basic'
+      credentials_encrypted BYTEA,    -- Encrypted OAuth tokens or API keys
+
+      -- Status
+      status VARCHAR(50) DEFAULT 'active',  -- 'active', 'paused', 'error', 'disconnected'
+      last_sync_at TIMESTAMPTZ,
+      last_error TEXT,
+
+      -- Settings
+      settings JSONB DEFAULT '{}',    -- Provider-specific settings
+      sync_frequency VARCHAR(50) DEFAULT 'daily',  -- 'realtime', 'hourly', 'daily'
+
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+      UNIQUE(organization_id, provider)
+  );
+    -- Account mapping between our system and external systems
+  CREATE TABLE integration_account_mappings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      integration_id UUID REFERENCES integrations(id) ON DELETE CASCADE,
+
+      -- Our category/cost center
+      internal_type VARCHAR(50),      -- 'category', 'cost_center', 'department'
+      internal_id VARCHAR(100),       -- Our ID or name
+
+      -- External account
+      external_account_code VARCHAR(50),  -- e.g., "6900" for travel
+      external_account_name VARCHAR(255),
+
+      -- VAT/Tax mapping
+      vat_code VARCHAR(20),
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+    -- Invoices
+  CREATE TABLE invoices (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+
+      -- Document info
+      invoice_number VARCHAR(100),
+      vendor_id UUID REFERENCES vendors(id),
+      vendor_name VARCHAR(255),       -- Denormalized for quick access
+
+      -- Amounts
+      subtotal DECIMAL(15, 2),
+      vat_amount DECIMAL(15, 2),
+      total_amount DECIMAL(15, 2) NOT NULL,
+      currency VARCHAR(3) DEFAULT 'NOK',
+
+      -- Dates
+      invoice_date DATE,
+      due_date DATE,
+      received_date DATE DEFAULT CURRENT_DATE,
+
+      -- Document
+      file_url TEXT,
+      file_type VARCHAR(20),
+      ocr_data JSONB,                 -- Extracted data from OCR
+      ocr_confidence DECIMAL(3, 2),
+
+      -- Matching
+      matched_po_id UUID,             -- Purchase order
+      matched_transaction_id UUID,    -- Bank transaction
+
+      -- Allocation
+      department_id UUID REFERENCES departments(id),
+      project_id UUID REFERENCES projects(id),
+      cost_center_id UUID REFERENCES cost_centers(id),
+
+      -- Workflow
+      status VARCHAR(50) DEFAULT 'pending',
+      -- 'pending_ocr', 'pending_review', 'pending_approval',
+      -- 'approved', 'rejected', 'paid', 'synced'
+
+      submitted_by UUID,
+      approved_by UUID,
+      approved_at TIMESTAMPTZ,
+      rejection_reason TEXT,
+
+      -- Sync status
+      synced_to_accounting BOOLEAN DEFAULT FALSE,
+      external_id VARCHAR(100),       -- ID in accounting system
+      sync_error TEXT,
+
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  -- Invoice line items
+  CREATE TABLE invoice_line_items (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      invoice_id UUID REFERENCES invoices(id) ON DELETE CASCADE,
+
+      description TEXT,
+      quantity DECIMAL(10, 2) DEFAULT 1,
+      unit_price DECIMAL(15, 2),
+      amount DECIMAL(15, 2) NOT NULL,
+      vat_rate DECIMAL(5, 2),         -- 25.00 for 25%
+      vat_amount DECIMAL(15, 2),
+
+      -- Allocation (can differ per line)
+      category VARCHAR(100),
+      cost_center_id UUID,
+      project_id UUID,
+      account_code VARCHAR(50),       -- For accounting
+
+      sort_order INTEGER DEFAULT 0
+  );
+    -- Vendors/Suppliers
+  CREATE TABLE vendors (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+
+      name VARCHAR(255) NOT NULL,
+      organization_number VARCHAR(50), -- Norwegian org number
+      vat_number VARCHAR(50),
+
+      -- Contact
+      email VARCHAR(255),
+      phone VARCHAR(50),
+      address JSONB,
+
+      -- Banking
+      bank_account VARCHAR(50),
+
+      -- Defaults
+      default_category VARCHAR(100),
+      default_cost_center_id UUID,
+      default_payment_terms INTEGER,  -- Days
+
+      -- Status
+      status VARCHAR(50) DEFAULT 'active',
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+ -- Sync jobs log
+  CREATE TABLE sync_jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id),
+      integration_id UUID REFERENCES integrations(id),
+
+      sync_type VARCHAR(50),          -- 'full', 'incremental'
+      direction VARCHAR(50),          -- 'inbound', 'outbound', 'bidirectional'
+      entities TEXT[],                -- ['invoices', 'payments']
+
+      status VARCHAR(50),             -- 'running', 'completed', 'failed'
+      started_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+
+      records_processed INTEGER DEFAULT 0,
+      records_succeeded INTEGER DEFAULT 0,
+      records_failed INTEGER DEFAULT 0,
+
+      error_log JSONB,
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  SELECT create_hypertable('sync_jobs', 'created_at');
