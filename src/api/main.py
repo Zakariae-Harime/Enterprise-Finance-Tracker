@@ -56,6 +56,8 @@ app.add_middleware(
      allow_headers=["*"], # Allow all headers
      allow_credentials=True, # Allow cookies and auth headers
     )
+#Register API routes
+app.include_router(accounts_router, prefix="/api/v1")
 @app.get("/health")
 async def health_check():
     """

@@ -94,7 +94,7 @@ async def get_account(
      name=event_data.get("account_name", "unknown"),
      currency=event_data.get("currency", "NOK"),
      account_type=event_data.get("account_type", "checking"),
-     initial_balance=Decimal(event_data.get("initial_balance", "0.00"))
-     version=len(events)
+     balance=Decimal(event_data.get("initial_balance", "0.00")),
+     version=len(events),
      created_at=first_event["created_at"]
  )
