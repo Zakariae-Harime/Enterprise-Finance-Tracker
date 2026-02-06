@@ -23,6 +23,7 @@ passlib[bcrypt]           # Password hashing
 httpx>=0.26.0             # Async HTTP client (for GoCardless API)
 uuid6>=2024.1.12          # UUID7 support (time-ordered UUIDs, RFC 9562)
 # === Azure Data Lake ===
+azure-storage-file-datalake>=12.14.0  # Data Lake Gen2 SDK
 azure-storage-blob>=12.19.0      # Azure Blob Storage SDK
 azure-identity>=1.15.0           # Azure authentication
 pyarrow>=15.0.0                  # Parquet file format (columnar, compressed)

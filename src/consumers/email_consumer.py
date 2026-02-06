@@ -16,15 +16,16 @@ class EmailConsumer (IdempotentConsumer):
 
     Inherits from IdempotentConsumer to ensure exactly-once processing.
     """
-    async def __init__(self, db_pool: asyncpg.Pool, consumer_name: str):
+    def __init__(self, db_pool: asyncpg.Pool, consumer_name: str, email_client):
         """
           Initialize email consumer.
 
           Args:
               db_pool: Database connection pool
+              consumer_name: Name of the consumer
               email_client: Service for sending emails (could be SendGrid, AWS SES, etc.)
         """
-         # Call parent constructor with consumer name
+        # Call parent constructor with consumer name
         super().__init__(db_pool, consumer_name="email_service")
         self._email_client = email_client  # Store email client instance (e.g., SendGrid, AWS SES)
     async def process_event(self, event_type: str, event_data: dict)-> None:
@@ -38,9 +39,9 @@ class EmailConsumer (IdempotentConsumer):
             event_data: Payload of the event as dict
         """
         if event_type == "AccountCreated":
-            await self._handle_account_created_email(event_data)
+            await self._handle_account_created(event_data)
         elif event_type == "TransactionCreated":
-            await self._handle_transaction_created(event_data)
+            await self._transaction_created(event_data)
         elif event_type == "BudgetExceeded":
             await self._handle_budget_exceeded(event_data)
         else:
@@ -60,7 +61,6 @@ class EmailConsumer (IdempotentConsumer):
             await self._email_client.send_email(to=user_email, subject=subject, body=body)
             print(f"[email_service] Sent AccountCreated email to {user_email}")
         if not user_email:
-            print("[email_service] No user_email in AccountCreated event data")
             return
         #send welcome email
         await self._email_client.send_email(
