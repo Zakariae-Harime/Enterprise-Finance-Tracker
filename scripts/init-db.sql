@@ -521,3 +521,41 @@ CREATE TABLE events (
   );
 
   SELECT create_hypertable('sync_jobs', 'created_at');
+   -- DEAD LETTER QUEUE (DLQ) TRACKING
+-- Stores failed messages for visibility, debugging, and replay
+-- Failed messages shouldn't disappear - ops team needs to see and fix them
+    CREATE Table dql_messages (
+      id BIGSERIAL PRIMARY KEY,
+      event_id VARCHAR(100) NOT NULL,  -- Which event caused this failure?
+      consumer_name VARCHAR(100) NOT NULL,  -- Which consumer failed to process it?
+      error_message TEXT NOT NULL,  -- The error that occurred
+      error_category VARCHAR(50) NOT NULL,     -- 'transient', 'permanent', 'unknown'
+      retries_counter INTEGER DEFAULT 0, -- How many times was this message retried before giving up?
+      original_event JSONB NOT NULL,  -- The original message payload (for debugging)
+      original_topic VARCHAR(100) NOT NULL,  -- Which Kafka topic it came from
+      failed_at VARCHAR(50),                   -- ISO timestamp of original failure
+      status VARCHAR(50) DEFAULT 'pending'
+      -- Possible values:
+      --   'pending': Just arrived, not yet processed
+      --   'needs_review': Permanent error, needs human attention
+      --   'retried': Auto-retried (transient error)
+      --   'replayed': Manually replayed after fix
+      retried_at TIMESTAMPTZ, --auto retry happened
+      replayed_at TIMESTAMPTZ, --manual replay happened
+      -- For audit trail:
+      reviewed_by VARCHAR(50), -- Who reviewed this failure (if applicable)
+      review_note TEXT -- what was the outcome of the review?
+    );
+    --creating index for fast common queries on DLQ
+    -- Dashboard: "Show me all pending DLQ messages"
+    CREATE INDEX idx_dlq_event_consumer
+        ON dql_messages (status, created_at DESC);
+    -- Filter: "Show me failures from data_lake_service"
+    CREATE INDEX idx_dlq_consumer_name
+        ON dql_messages (consumer_name, created_at DESC);
+    -- Analytics: "How many transient vs permanent errors?"
+    CREATE INDEX idx_dlq_error_category
+        ON dql_messages (error_category, created_at DESC);
+    -- Deduplication index: "Has this event_id already failed?"
+    CREATE UNIQUE INDEX idx_dlq_event_id_consumer
+        ON dql_messages (event_id, consumer_name);
