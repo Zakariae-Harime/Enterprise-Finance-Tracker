@@ -12,16 +12,16 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE events (
       -- Unique identifier for this specific event
       -- UUID prevents collisions across distributed systems
-      event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id UUID NOT NULL DEFAULT gen_random_uuid(),
        -- What TYPE of thing does this event belong to?
       -- Examples: 'account', 'transaction', 'budget', 'user'
-      aggregate_type VARCHAR(50) NOT NULL,
+      aggregate_type TEXT NOT NULL,
       -- WHICH specific account/transaction/budget?
       -- This groups all events for one entity together
       aggregate_id UUID NOT NULL,
        -- What happened? (past tense!)
       -- Examples: 'TransactionCreated', 'BudgetExceeded', 'AccountOpened'
-      event_type VARCHAR(100) NOT NULL,
+      event_type TEXT NOT NULL,
        -- Extra info: who triggered it, IP address, request ID
       -- Useful for debugging and audit trails
       event_data JSONB NOT NULL,
@@ -35,7 +35,8 @@ CREATE TABLE events (
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         -- UNIQUE CONSTRAINT: Prevents two events with same version
       -- This is how we detect concurrent modifications!
-      UNIQUE (aggregate_id, version)
+      PRIMARY KEY (event_id, created_at),
+      UNIQUE (aggregate_id, version, created_at)
   );
   -- TIMESCALEDB HYPERTABLE
   -- Automatically partitions data by time for massive performance gains
@@ -397,6 +398,32 @@ CREATE TABLE events (
       created_at TIMESTAMPTZ DEFAULT NOW()
   );
     -- Invoices
+    CREATE TABLE vendors (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+
+      name VARCHAR(255) NOT NULL,
+      organization_number VARCHAR(50), -- Norwegian org number
+      vat_number VARCHAR(50),
+
+      -- Contact
+      email VARCHAR(255),
+      phone VARCHAR(50),
+      address JSONB,
+
+      -- Banking
+      bank_account VARCHAR(50),
+
+      -- Defaults
+      default_category VARCHAR(100),
+      default_cost_center_id UUID,
+      default_payment_terms INTEGER,  -- Days
+
+      -- Status
+      status VARCHAR(50) DEFAULT 'active',
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
   CREATE TABLE invoices (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
@@ -471,32 +498,7 @@ CREATE TABLE events (
       sort_order INTEGER DEFAULT 0
   );
     -- Vendors/Suppliers
-  CREATE TABLE vendors (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-
-      name VARCHAR(255) NOT NULL,
-      organization_number VARCHAR(50), -- Norwegian org number
-      vat_number VARCHAR(50),
-
-      -- Contact
-      email VARCHAR(255),
-      phone VARCHAR(50),
-      address JSONB,
-
-      -- Banking
-      bank_account VARCHAR(50),
-
-      -- Defaults
-      default_category VARCHAR(100),
-      default_cost_center_id UUID,
-      default_payment_terms INTEGER,  -- Days
-
-      -- Status
-      status VARCHAR(50) DEFAULT 'active',
-
-      created_at TIMESTAMPTZ DEFAULT NOW()
-  );
+  
  -- Sync jobs log
   CREATE TABLE sync_jobs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -524,7 +526,7 @@ CREATE TABLE events (
    -- DEAD LETTER QUEUE (DLQ) TRACKING
 -- Stores failed messages for visibility, debugging, and replay
 -- Failed messages shouldn't disappear - ops team needs to see and fix them
-    CREATE Table dql_messages (
+    CREATE Table dlq_messages (
       id BIGSERIAL PRIMARY KEY,
       event_id VARCHAR(100) NOT NULL,  -- Which event caused this failure?
       consumer_name VARCHAR(100) NOT NULL,  -- Which consumer failed to process it?
@@ -534,7 +536,7 @@ CREATE TABLE events (
       original_event JSONB NOT NULL,  -- The original message payload (for debugging)
       original_topic VARCHAR(100) NOT NULL,  -- Which Kafka topic it came from
       failed_at VARCHAR(50),                   -- ISO timestamp of original failure
-      status VARCHAR(50) DEFAULT 'pending'
+      status VARCHAR(50) DEFAULT 'pending',
       -- Possible values:
       --   'pending': Just arrived, not yet processed
       --   'needs_review': Permanent error, needs human attention
@@ -544,18 +546,19 @@ CREATE TABLE events (
       replayed_at TIMESTAMPTZ, --manual replay happened
       -- For audit trail:
       reviewed_by VARCHAR(50), -- Who reviewed this failure (if applicable)
-      review_note TEXT -- what was the outcome of the review?
+      review_note TEXT, -- what was the outcome of the review?
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
     --creating index for fast common queries on DLQ
     -- Dashboard: "Show me all pending DLQ messages"
     CREATE INDEX idx_dlq_event_consumer
-        ON dql_messages (status, created_at DESC);
+        ON dlq_messages (status, created_at DESC);
     -- Filter: "Show me failures from data_lake_service"
     CREATE INDEX idx_dlq_consumer_name
-        ON dql_messages (consumer_name, created_at DESC);
+        ON dlq_messages (consumer_name, created_at DESC);
     -- Analytics: "How many transient vs permanent errors?"
     CREATE INDEX idx_dlq_error_category
-        ON dql_messages (error_category, created_at DESC);
+        ON dlq_messages (error_category, created_at DESC);
     -- Deduplication index: "Has this event_id already failed?"
     CREATE UNIQUE INDEX idx_dlq_event_id_consumer
-        ON dql_messages (event_id, consumer_name);
+        ON dlq_messages (event_id, consumer_name);
