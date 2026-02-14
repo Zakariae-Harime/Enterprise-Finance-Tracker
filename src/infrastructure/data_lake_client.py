@@ -44,7 +44,8 @@ class DataLakeClient:
         self,
         account_name: str,
         credential: Optional[DefaultAzureCredential] = None,
-        connection_string: Optional[str] = None
+        connection_string: Optional[str] = None,
+        api_version: Optional[str] = None
     ):
         """
         Initialize Data Lake client.
@@ -53,6 +54,7 @@ class DataLakeClient:
             account_name: Azure storage account name (e.g., 'financetrackersa')
             credential: Azure credential (DefaultAzureCredential for production)
             connection_string: Connection string (for development only!)
+            api_version: Pin API version (needed for Azurite compatibility)
 
         Authentication priority:
             1. Connection string (if provided)
@@ -61,7 +63,11 @@ class DataLakeClient:
         self.account_name = account_name
         if connection_string:
             # Development: Use connection string
-            self.service_client = DataLakeServiceClient.from_connection_string(connection_string)
+            # api_version lets us pin to a version Azurite supports
+            self._service_client = DataLakeServiceClient.from_connection_string(
+                connection_string,
+                **({"api_version": api_version} if api_version else {})
+            )
         else:
             # Production: Use DefaultAzureCredential
             # This tries (in order):
@@ -89,7 +95,7 @@ class DataLakeClient:
                 self._service_client.create_file_system(filesystem_name)
           """
         return self._service_client.get_file_system_client(filesystem_name)
-    async def upload_event_to_bronze(
+    def upload_event_to_bronze(
         self,
         event_id: UUID,
         event_type: str,

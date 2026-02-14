@@ -30,6 +30,7 @@
         - POSTGRES_USER=postgres
         - POSTGRES_PASSWORD=postgres
         - POSTGRES_DB=finance_tracker
+        - POSTGRES_HOST_AUTH_METHOD=trust # For local development only - do NOT use in production!
       volumes:
         - postgres_data:/var/lib/postgresql/data
         - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql

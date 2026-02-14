@@ -501,7 +501,7 @@ CREATE TABLE events (
   
  -- Sync jobs log
   CREATE TABLE sync_jobs (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id UUID NOT NULL DEFAULT gen_random_uuid(),
       organization_id UUID REFERENCES organizations(id),
       integration_id UUID REFERENCES integrations(id),
 
@@ -519,7 +519,8 @@ CREATE TABLE events (
 
       error_log JSONB,
 
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (id, created_at)
   );
 
   SELECT create_hypertable('sync_jobs', 'created_at');
