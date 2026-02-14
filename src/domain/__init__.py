@@ -79,7 +79,7 @@ class DomainEvent:
         event.amount = 100  # ERROR! frozen=True prevents this
     """
     aggregate_id: UUID
-    metadata: EventMetadata = field(default_factory=EventMetadata)
+    metadata: EventMetadata = field(default_factory=EventMetadata, kw_only=True)
 
     @property
     def event_type(self) -> str:

@@ -7,7 +7,7 @@
 
   Follows same pattern as account.py schemas.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from enum import Enum
 from datetime import datetime
 from uuid import UUID
@@ -96,18 +96,17 @@ class CreateTransactionRequest(BaseModel):
         description="The account this transaction belongs to"
     )
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "amount": "250.00",
-                "currency": "NOK",
-                "transaction_type": "debit",
-                "merchant_name": "REMA 1000 Grünerløkka",
-                "description": "Weekly groceries",
-                "category": "meals",
-                "account_id": "550e8400-e29b-41d4-a716-446655440000"
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "amount": "250.00",
+            "currency": "NOK",
+            "transaction_type": "debit",
+            "merchant_name": "REMA 1000 Grünerløkka",
+            "description": "Weekly groceries",
+            "category": "meals",
+            "account_id": "550e8400-e29b-41d4-a716-446655440000"
         }
+    })
 
 
 class TransactionCreatedResponse(BaseModel):
@@ -136,8 +135,7 @@ class TransactionResponse(BaseModel):
     version: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TransactionListResponse(BaseModel):
@@ -170,14 +168,13 @@ class CategorizeTransactionRequest(BaseModel):
         le=1.0,
         description="Confidence score for ML-based categorization (0.0 to 1.0)"
     )
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "category": "meals",
-                "categorized_by": "ml_model",
-                "confidence_score": 0.85
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "category": "meals",
+            "categorized_by": "ml_model",
+            "confidence_score": 0.85
         }
+    })
 class DisputeTransactionRequest(BaseModel):
     """
       Request body for disputing a transaction.
@@ -192,12 +189,11 @@ class DisputeTransactionRequest(BaseModel):
         max_length=1000,
         description="Reason for disputing the transaction"
     )
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "reason": "Unauthorized charge - I did not make this purchase"
-            }
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "reason": "Unauthorized charge - I did not make this purchase"
         }
+    })
 class TransactionUpdatedResponse(BaseModel):
     """Generic response after mutating an existing transaction."""
     transaction_id: UUID
