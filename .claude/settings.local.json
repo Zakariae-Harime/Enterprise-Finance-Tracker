@@ -1,3 +1,8 @@
 {
-  "outputStyle": "Learning"
+  "outputStyle": "Learning",
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile src/consumers/account_projection_consumer.py)"
+    ]
+  }
 }

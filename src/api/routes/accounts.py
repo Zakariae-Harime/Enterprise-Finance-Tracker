@@ -48,7 +48,7 @@ async def create_account(
     5. FastAPI passes it to create_account()     
     """
     event = AccountCreated (
-    account_id = uuid4(),
+    aggregate_id = uuid4(),
     metadata = EventMetadata(),
     account_name=request.name,
     currency=request.currency.value, #.value converts Currency.NOK → "NOK" string
@@ -58,14 +58,14 @@ async def create_account(
     tenant_id = UUID("00000000-0000-0000-0000-000000000001")
 
     await event_store.append_events(
-        aggregate_id=event.account_id,
+        aggregate_id=event.aggregate_id,
         aggregate_type="Account",
         new_events=[event],
         expected_version=0,         
         tenant_id=tenant_id
     )
     return AccountCreatedResponse(
-        account_id=event.account_id,
+        account_id=event.aggregate_id,
         status="created",
         message=f"Account '{request.name}' created successfully"
     )
@@ -74,27 +74,66 @@ async def create_account(
             summary="Get account details by ID")
 async def get_account(
     account_id: UUID,
-    event_store: EventStore = Depends(get_event_store)
+    event_store: EventStore = Depends(get_event_store),
+    db_pool=Depends(get_db_pool),              # NEW: direct pool for projection query
 ) -> AccountResponse:
-    
+    """
+    CQRS Query: tries the fast read model first, falls back to event replay.
+
+    Fast path  → account_projections table (O(1) single row lookup)
+    Slow path  → event replay (O(n) — used before projection is built)
+
+    Why two paths? The projection is built asynchronously by the Kafka consumer.
+    If the consumer hasn't processed the AccountCreated event yet (eventual
+    consistency window), the projection row doesn't exist and we fall back.
+    In production, this window is milliseconds.
+    """
     tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+
+    # ── FAST PATH: Read from projection table ─────────────────────────────
+    async with db_pool.acquire() as conn:
+        projection = await conn.fetchrow(
+            """
+            SELECT account_id, bank_name, account_type, currency,
+                   current_balance, last_event_version, created_at
+            FROM account_projections
+            WHERE account_id = $1
+            """,
+            account_id,
+        )
+
+    if projection:
+        # Projection exists — return instantly without touching the event store
+        return AccountResponse(
+            account_id=projection["account_id"],
+            name=projection["bank_name"] or "Unknown",
+            currency=projection["currency"] or "NOK",
+            account_type=projection["account_type"] or "checking",
+            balance=projection["current_balance"] or Decimal("0.00"),
+            version=projection["last_event_version"] or 0,
+            created_at=projection["created_at"],
+        )
+
+    # ── SLOW PATH: Projection not ready yet — replay events ───────────────
+    # This runs when: consumer hasn't processed the event yet, or
+    # account_projections table is empty (fresh environment).
     try:
         events = await event_store.load_events(
             aggregate_id=account_id,
             aggregate_type="Account",
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
         )
     except AggregateNotFoundError:
         raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
-     # Replay events to build current state
+
     first_event = events[0]
     event_data = first_event["event_data"]
     return AccountResponse(
-     account_id=event_data["account_id"],
-     name=event_data.get("account_name", "unknown"),
-     currency=event_data.get("currency", "NOK"),
-     account_type=event_data.get("account_type", "checking"),
-     balance=Decimal(event_data.get("initial_balance", "0.00")),
-     version=len(events),
-     created_at=first_event["created_at"]
- )
+        account_id=event_data.get("aggregate_id", str(account_id)),
+        name=event_data.get("account_name", "Unknown"),
+        currency=event_data.get("currency", "NOK"),
+        account_type=event_data.get("account_type", "checking"),
+        balance=Decimal(event_data.get("initial_balance", "0.00")),
+        version=len(events),
+        created_at=first_event["created_at"],
+    )

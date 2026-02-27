@@ -56,6 +56,7 @@ async def create_transaction(
     transaction_id = uuid4()
 
     event = TransactionCreated(
+        account_id=request.account_id,
         aggregate_id=transaction_id,
         metadata=EventMetadata(),
         amount=request.amount,

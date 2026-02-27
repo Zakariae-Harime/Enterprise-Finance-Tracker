@@ -212,6 +212,7 @@ class TransactionCreated(DomainEvent):
 
     This event drives balance changes on accounts.
     """
+    account_id: UUID
     amount: Decimal
     currency: Currency
     transaction_type: TransactionType
