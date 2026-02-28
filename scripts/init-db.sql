@@ -30,6 +30,8 @@ CREATE TABLE events (
       -- Increments with each event for this aggregate
       -- Version 1, 2, 3, 4... for each aggregate_id
       version INTEGER NOT NULL,
+      -- Multi-tenant isolation: which organization owns this event?
+      tenant_id UUID,
       -- When was this event recorded?
       -- TIMESTAMPTZ = timestamp with timezone (always stores UTC)
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -63,13 +65,19 @@ CREATE TABLE events (
       -- Auto-incrementing ID (order matters for publishing)
       id BIGSERIAL PRIMARY KEY,
 
+      -- Matches the event_id from the events table (for traceability)
+      event_id UUID,
+
       -- Same fields as events table for routing
       aggregate_type VARCHAR(50) NOT NULL,
       aggregate_id UUID NOT NULL,
       event_type VARCHAR(100) NOT NULL,
 
       -- The event payload to send to Kafka
-      payload JSONB NOT NULL,
+      event_data JSONB NOT NULL,
+
+      -- Multi-tenant isolation
+      tenant_id UUID,
 
       -- When was this outbox entry created?
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -125,7 +133,7 @@ CREATE TABLE events (
 
   -- Budget tracking with computed columns
   CREATE TABLE budget_status (
-      id BIGSERIAL PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL,
       category VARCHAR(100) NOT NULL,
       month DATE NOT NULL,                    -- First day of month

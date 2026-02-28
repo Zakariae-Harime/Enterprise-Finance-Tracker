@@ -11,7 +11,7 @@
     - Auto-generates OpenAPI docs
     - Used by all major Norwegian tech companies
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 from datetime import datetime
 from uuid import UUID
@@ -42,51 +42,53 @@ class AccountCreatingRequest(BaseModel):
       {
           "name": "Business Savings",
           "currency": "NOK",
-          "account_type": "savings",
+          "account_type": "SAVINGS",
           "initial_balance": "10000.00"
       }
     """
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "NOK SAVINGS",
+                "currency": "NOK",
+                "account_type": "SAVINGS",
+                "initial_balance": "10000.00",
+            }
+        }
+    )
+
     name: str = Field(
         ...,
         min_length=2,
         max_length=100,
         description="Name of the account (2-100 characters)",
-        example=["Business Savings"]
     )
-    currency: Currency= Field(
+    currency: Currency = Field(
         default=Currency.NOK,
-        description="Currency of the account (default: NOK)")
+        description="Currency of the account (default: NOK)",
+    )
     account_type: AccountType = Field(
         default=AccountType.SAVINGS,
-        description="Type of the account)")
+        description="Type of the account",
+    )
     initial_balance: Optional[Decimal] = Field(
         default=Decimal("0.00"),
-        ge=0, # greater than or equal to 0
-        description="Initial balance for the account"
+        ge=0,
+        description="Initial balance for the account",
     )
-    class Config:
-        """Pydantic configuration."""
-        json_schema_extra = {
-            "example": {
-                "name": "NOK SAVINGS",
-                "currency": "NOK",
-                "account_type": "SAVINGS",
-                "initial_balance": "10000.00"
-            }
-        }
 class AccountResponse(BaseModel):
         """
         Response after creating/fetching an account.
         """
-        account_id:UUID
-        name:str
-        created_at:datetime
-        version:int
-        balance:Decimal
-        currency:Currency
-        account_type:AccountType
-        class Config:
-            from_attributes = True  # Allow creating from ORM objects
+        model_config = ConfigDict(from_attributes=True)
+
+        account_id: UUID
+        name: str
+        created_at: datetime
+        version: int
+        balance: Decimal
+        currency: Currency
+        account_type: AccountType
 class AccountCreatedResponse(BaseModel):
         """
         Response after successfully creating an account.

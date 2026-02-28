@@ -187,13 +187,15 @@ class EventStore:
                                INSERT INTO outbox (
                                    event_id,
                                    aggregate_type,
+                                   aggregate_id,
                                    event_type,
                                    event_data,
                                    tenant_id
-                               ) VALUES ($1, $2, $3, $4, $5)
+                               ) VALUES ($1, $2, $3, $4, $5, $6)
                                """,
                                event.metadata.event_id,
                                aggregate_type,
+                               aggregate_id,
                                event.__class__.__name__,
                                event_data,
                                tenant_id
