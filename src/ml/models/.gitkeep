@@ -1,0 +1,7 @@
+# This directory stores trained model files — all gitignored (too large for Git).
+# After training, place these files here:
+#   categorizer.onnx          — quantized NB-BERT for inference (~30MB)
+#   tfidf_vectorizer.joblib   — fitted TF-IDF vectorizer (~500KB)
+#   tfidf_classifier.joblib   — fitted LogisticRegression weights (~50KB)
+#
+# Models are uploaded to ADLS Gold layer after training and downloaded here on deploy.

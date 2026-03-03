@@ -10,9 +10,19 @@ sqlalchemy>=2.0.0         # ORM
 # === Kafka ===
 aiokafka>=0.10.0          # Async Kafka client
 
-# === ML ===
-torch>=2.1.0              # PyTorch for BERT model
-transformers>=4.36.0      # Hugging Face transformers (BERT)
+# === ML — Core ===
+torch>=2.1.0              # PyTorch: the deep learning framework BERT runs on
+transformers>=4.36.0      # HuggingFace: loads NbAiLab/nb-bert-base + Trainer API
+scikit-learn>=1.4.0       # TF-IDF vectorizer + LogisticRegression (Layer 2)
+joblib>=1.3.0             # Save/load trained sklearn models to disk (.joblib files)
+datasets>=2.16.0          # HuggingFace Datasets: efficient data loading during training
+
+# === ML — Inference (ONNX) ===
+onnx>=1.15.0              # ONNX model format: portable, framework-independent
+onnxruntime>=1.17.0       # ONNX Runtime: 10x faster inference than raw PyTorch
+
+# === ML — Azure Training ===
+azure-ai-ml>=1.12.0       # Azure ML v2 SDK: submit training jobs from your laptop
 
 # === Data Processing ===
 pandas>=2.1.0             # DataFrames for aggregations
