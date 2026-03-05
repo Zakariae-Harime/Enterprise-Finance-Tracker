@@ -6,7 +6,7 @@
     2. Keep route handlers clean and focused
     3. Make testing easier (can mock dependencies)
 """
-from fastapi import Depends, Request
+from fastapi import Request
 from src.domain.events_store import EventStore, OutboxRelay
 
 def get_db_pool(request: Request):
@@ -42,5 +42,15 @@ def get_event_store(request: Request) -> EventStore:
     return EventStore(pool)
 def get_outbox_relay(request: Request) -> OutboxRelay:
     pool=request.app.state.db_pool
-    kafka_producer=request.app.state.kafka_producer     
+    kafka_producer=request.app.state.kafka_producer
     return OutboxRelay(pool, kafka_producer)
+
+def get_categorizer(request: Request):
+    """
+    Dependency to get the shared TransactionCategorizer instance.
+
+    The categorizer is initialized once at startup (loads 170MB ONNX model).
+    All requests share the same instance — no per-request model loading.
+    Returns None if categorizer failed to initialize (app still works without it).
+    """
+    return getattr(request.app.state, "categorizer", None)

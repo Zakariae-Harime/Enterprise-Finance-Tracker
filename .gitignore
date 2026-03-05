@@ -19,6 +19,16 @@ venv/
 # Logs & Data
 *.log
 .data/
+data/
+
+# ML models — large binaries, stored in ADLS/ACR not git
+src/ml/models/*.joblib
+src/ml/models/*.onnx
+src/ml/models/*.onnx.data
+src/ml/models/final_model/
+
+# Jupyter
+.ipynb_checkpoints/
 
 # Claude Code internal
 .claude/

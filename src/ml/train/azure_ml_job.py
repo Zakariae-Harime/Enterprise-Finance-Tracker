@@ -68,6 +68,9 @@ COMMAND JOB:
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parents[3] / ".env")
+
 from azure.ai.ml import Input, MLClient, command
 from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import (
@@ -80,16 +83,15 @@ from azure.identity import DefaultAzureCredential
 
 # ─── Azure Configuration ───────────────────────────────────────────────────────
 # Read from environment variables — never hardcode credentials in code!
-# Set these before running: export AZURE_SUBSCRIPTION_ID=...
-# Or add to .env and load with python-dotenv
+# Values loaded from .env file at project root (via python-dotenv above)
 
 SUBSCRIPTION_ID  = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
 RESOURCE_GROUP   = os.environ.get("AZURE_RESOURCE_GROUP", "finance-tracker-rg")
 WORKSPACE_NAME   = os.environ.get("AZURE_ML_WORKSPACE", "finance-tracker-ml")
 
 # GPU compute cluster settings
-COMPUTE_NAME     = "gpu-cluster-t4"
-COMPUTE_SIZE     = "Standard_NC4as_T4_v3"  # T4 GPU, 4 vCPUs, 28GB RAM, $0.52/hour
+COMPUTE_NAME     = "gpu-cluster-nc6"
+COMPUTE_SIZE     = "Standard_NC6"           # K80 GPU, 6 vCPUs, 56GB RAM, $0.90/hour
 MIN_NODES        = 0    # Scale to 0 when idle → $0 cost when not training
 MAX_NODES        = 1    # Only need 1 node for our dataset size
 

@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages to user directory
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+COPY requirements-prod.txt .
+RUN pip install --user --no-cache-dir -r requirements-prod.txt
 
 # ==========================================
 # Stage 2: PRODUCTION - Minimal final image
@@ -38,6 +38,11 @@ ENV PATH=/home/appuser/.local/bin:$PATH
 # Copy application code
 COPY --chown=appuser:appuser src/ ./src/
 
+# Copy only inference models (TF-IDF + int8 ONNX) — final_model/ PyTorch weights not needed at runtime
+COPY --chown=appuser:appuser src/ml/models/tfidf_vectorizer.joblib ./src/ml/models/
+COPY --chown=appuser:appuser src/ml/models/tfidf_classifier.joblib ./src/ml/models/
+COPY --chown=appuser:appuser src/ml/models/categorizer_int8.onnx ./src/ml/models/
+
 # Run as non-root user (security best practice)
 USER appuser
 
@@ -48,4 +53,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

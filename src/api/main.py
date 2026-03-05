@@ -8,27 +8,30 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import asyncpg
+import os
 from aiokafka import AIOKafkaProducer
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes.accounts import router as accounts_router
 from src.api.routes.transactions import router as transactions_router
 from src.api.routes.budgets import router as budgets_router
+from src.ml.categorizer import TransactionCategorizer
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Manages application lifecycle.
 
-    Startup: Create database pool, Kafka producer
+    Startup: Create database pool, Kafka producer, ML categorizer
     Shutdown: Close connections gracefully
 
     lifespan vs @app.on_event?
       - @app.on_event is deprecated in FastAPI
       - lifespan is the modern, recommended approach
     """
-    # STARTUP 
+    # STARTUP
     # Create database connection pool
     app.state.db_pool = await asyncpg.create_pool(
-        dsn="postgresql://user:password@localhost:5432/finance_db",
+        dsn=os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/finance_tracker"),
         min_size=5,
         max_size=20  # Maximum 20 concurrent connections
     )
@@ -37,6 +40,16 @@ async def lifespan(app: FastAPI):
         bootstrap_servers='localhost:9092'
     )
     await app.state.kafka_producer.start()
+
+    # Load ML categorizer (3-layer: rules → TF-IDF → NB-BERT ONNX)
+    # Loads once at startup — 170MB ONNX model stays in memory for all requests
+    try:
+        app.state.categorizer = TransactionCategorizer()
+        print("[startup] ML categorizer ready (rules + TF-IDF + NB-BERT)")
+    except Exception as e:
+        app.state.categorizer = None
+        print(f"[startup] ML categorizer unavailable: {e} — transactions will need manual categorization")
+
     print("Database pool and Kafka producer initialized")
     yield
     # SHUTDOWN

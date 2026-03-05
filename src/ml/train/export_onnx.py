@@ -150,6 +150,7 @@ def export_to_onnx(model_dir: Path, output_path: Path, max_length: int = 64) -> 
             do_constant_folding=True,
 
             verbose=False,
+            dynamo=False,  # Use legacy TorchScript exporter — dynamo doesn't support dynamic_axes
         )
 
     file_size_mb = output_path.stat().st_size / (1024 * 1024)
@@ -271,7 +272,6 @@ def quantize_int8(onnx_path: Path, output_path: Path) -> None:
         model_input=str(onnx_path),
         model_output=str(output_path),
         weight_type=QuantType.QInt8,     # Quantize weights to int8 (signed 8-bit integer)
-        optimize_model=True,             # Apply ONNX graph optimizations before quantization
     )
 
     file_size_mb = output_path.stat().st_size / (1024 * 1024)

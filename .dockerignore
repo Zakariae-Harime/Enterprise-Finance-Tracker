@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+htmlcov/
+.coverage
+
+# ML — PyTorch weights not needed (only ONNX is used at runtime)
+src/ml/models/final_model/
+src/ml/models/categorizer.onnx
+src/ml/models/categorizer.onnx.data
+
+# Data (synthetic/training data — not needed in production)
+data/
+
+# Tests
+tests/
+
+# Notebooks
+notebooks/
+
+# Local env
+.env
+*.env

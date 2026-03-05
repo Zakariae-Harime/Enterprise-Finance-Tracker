@@ -23,6 +23,7 @@ async def api_client(db_pool):
     Both dependencies resolve correctly once state is set.
     """
     app.state.db_pool = db_pool
+    app.state.categorizer = None  # Skip 170MB model load in tests — auto-categorization disabled
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

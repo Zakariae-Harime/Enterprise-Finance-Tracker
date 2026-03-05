@@ -28,6 +28,7 @@ Sign up at: https://console.tink.com/
 
 API Base URL: https://api.tink.com
 """
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -138,7 +139,7 @@ class TinkClient:
                 "client_id": self._client_id,
                 "client_secret": self._client_secret,
                 "grant_type": "client_credentials",
-                "scope": "authorization:grant",
+                "scope": "authorization:grant user:create account-verification-reports:read",
             },
             timeout=30.0,
         )
@@ -217,13 +218,17 @@ class TinkClient:
         grant_response = httpx.post(
             f"{TINK_BASE_URL}/api/v1/oauth/authorization-grant",
             headers=self._client_headers(),
-            json={
+            data={                                   # form-encoded, NOT json — Tink OAuth endpoints use form data
                 "external_user_id": external_user_id,
-                "scope": "accounts:read,transactions:read",
+                "scope": "accounts:read transactions:read credentials:read credentials:write",
+                "actor_client_id": self._client_id,
             },
             timeout=30.0,
         )
-        grant_response.raise_for_status()
+        if not grant_response.is_success:
+            raise RuntimeError(
+                f"authorization-grant failed {grant_response.status_code}: {grant_response.text}"
+            )
         code = grant_response.json()["code"]
 
         # Step 2: Exchange one-use code for user access token
@@ -239,6 +244,89 @@ class TinkClient:
         )
         token_response.raise_for_status()
         self._user_token = token_response.json()["access_token"]
+
+    # ── Sandbox Bank Connection ────────────────────────────────────────────
+
+    def connect_sandbox_bank(self) -> str:
+        """
+        Link the Tink test provider to the sandbox user.
+
+        In production: user would be redirected to their real bank login page.
+        In sandbox: se-test-open-banking-redirect auto-completes with mock data.
+
+        POST /api/v1/credentials
+        Headers: Authorization: Bearer {user_token}
+        Body: {"providerName": "se-test-open-banking-redirect", "fields": {}}
+        Response: {"id": "cred_id...", "status": "CREATED", ...}
+
+        Returns:
+            credentials_id — used to poll sync status
+        """
+        response = httpx.post(
+            f"{TINK_BASE_URL}/api/v1/credentials",
+            headers=self._user_headers(),
+            json={
+                "providerName": "se-test-open-banking-redirect",
+                "fields": {},
+            },
+            timeout=30.0,
+        )
+        # 409 = credentials for this provider already exist — already synced
+        if response.status_code == 409:
+            print("[tink] Bank already connected — fetching existing credentials ID")
+            existing = httpx.get(
+                f"{TINK_BASE_URL}/api/v1/credentials",
+                headers=self._user_headers(),
+                timeout=30.0,
+            )
+            existing.raise_for_status()
+            creds = existing.json().get("credentials", [])
+            if creds:
+                return creds[0]["id"]
+            raise RuntimeError("409 but no existing credentials found")
+
+        if not response.is_success:
+            raise RuntimeError(
+                f"create credentials failed {response.status_code}: {response.text}"
+            )
+        return response.json()["id"]
+
+    def wait_for_bank_sync(self, credentials_id: str, timeout_seconds: int = 60) -> None:
+        """
+        Poll credentials status until Tink finishes ingesting mock bank data.
+
+        Status lifecycle:
+          CREATED → UPDATING → UPDATED  (success — transactions now available)
+                             → AUTHENTICATION_ERROR  (sandbox provider issue)
+
+        Typical sandbox sync time: 5-15 seconds.
+
+        GET /api/v1/credentials/{id}
+        Headers: Authorization: Bearer {user_token}
+        Response: {"id": "...", "status": "UPDATING", ...}
+        """
+        print("[tink] Waiting for sandbox bank sync...", end="", flush=True)
+        for _ in range(timeout_seconds // 3):
+            response = httpx.get(
+                f"{TINK_BASE_URL}/api/v1/credentials/{credentials_id}",
+                headers=self._user_headers(),
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            status = response.json().get("status", "")
+            print(f" {status}", end="", flush=True)
+
+            if status == "UPDATED":
+                print()  # newline after status dots
+                return
+            if status in ("AUTHENTICATION_ERROR", "DELETED", "SESSION_EXPIRED"):
+                print()
+                raise RuntimeError(f"Bank sync failed: {status}")
+
+            time.sleep(3)
+
+        print()
+        raise RuntimeError(f"Bank sync timed out after {timeout_seconds}s")
 
     # ── Data Fetching ──────────────────────────────────────────────────────
 
@@ -317,21 +405,204 @@ class TinkClient:
 
     @staticmethod
     def _parse_transaction(raw: dict) -> TinkTransaction:
-        # TODO(human): Parse a raw Tink API dict into a TinkTransaction.
-        # See the TinkTransaction docstring above for the exact raw JSON shape.
-        #
-        # You need to handle:
-        #   1. Amount: raw["amount"]["value"] has "unscaledValue" (str) and "scale" (str)
-        #              Formula: abs(Decimal(unscaledValue) / Decimal(10 ** scale))
-        #              Use Decimal (not float!) — this is financial data.
-        #   2. Currency: raw["amount"]["currencyCode"]
-        #   3. Description: prefer raw["descriptions"]["display"], fallback to "original", then "UNKNOWN"
-        #   4. Booking date: raw["dates"]["booked"] is "YYYY-MM-DD" → parse with strptime, set tzinfo=timezone.utc
-        #   5. transaction_id: raw["id"] — fallback to str(uuid4()) if missing
-        #
-        # Return: TinkTransaction(transaction_id=..., description=..., amount=...,
-        #                         currency=..., booking_date=..., raw=raw)
-        pass
+        amount_data = raw.get("amount", {}).get("value", {})
+        unscaled = int(amount_data.get("unscaledValue", "0"))
+        scale = int(amount_data.get("scale", "0"))
+        amount = abs(Decimal(unscaled) / Decimal(10 ** scale))
+
+        currency = raw.get("amount", {}).get("currencyCode", "SEK")
+
+        descriptions = raw.get("descriptions", {})
+        description = (
+            descriptions.get("display")
+            or descriptions.get("original")
+            or "UNKNOWN"
+        )
+
+        date_str = raw.get("dates", {}).get("booked", "2024-01-01")
+        booking_date = datetime.strptime(date_str, "%Y-%m-%d").replace(
+            tzinfo=timezone.utc
+        )
+
+        return TinkTransaction(
+            transaction_id=raw.get("id", str(uuid4())),
+            description=description,
+            amount=amount,
+            currency=currency,
+            booking_date=booking_date,
+            raw=raw,
+        )
+
+
+
+def exchange_code_for_transactions(
+    client_id: str,
+    client_secret: str,
+    authorization_code: str,
+) -> list[dict]:
+    """
+    Exchange a Tink Link authorization code for transactions.
+
+    After completing the Tink Link browser flow, the redirect URL contains:
+      ?code=fcad441a...&credentialsId=0f2483ad...
+
+    The code is ONE-TIME USE and expires in ~5 minutes.
+    Call this function immediately after getting the code.
+
+    Steps:
+      1. POST /api/v1/oauth/token with grant_type=authorization_code
+         → get user access token
+      2. GET /data/v2/transactions with the user token
+         → fetch all transactions from the demo bank account
+
+    Args:
+        authorization_code: The 'code' param from the redirect URL after Tink Link flow
+    """
+    # Step 1: Exchange the one-time code for a user access token
+    token_response = httpx.post(
+        f"{TINK_BASE_URL}/api/v1/oauth/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "authorization_code",
+            "code": authorization_code,
+        },
+        timeout=30.0,
+    )
+    if not token_response.is_success:
+        raise RuntimeError(
+            f"code exchange failed {token_response.status_code}: {token_response.text}"
+        )
+    user_token = token_response.json()["access_token"]
+    print("[tink] Code exchanged → user token obtained")
+
+    # Step 2: Fetch all transactions with cursor-based pagination
+    transactions = []
+    page_token: Optional[str] = None
+
+    while True:
+        params: dict = {"pageSize": 100}
+        if page_token:
+            params["pageToken"] = page_token
+
+        response = httpx.get(
+            f"{TINK_BASE_URL}/data/v2/transactions",
+            headers={"Authorization": f"Bearer {user_token}"},
+            params=params,
+            timeout=30.0,
+        )
+        if not response.is_success:
+            raise RuntimeError(
+                f"fetch transactions failed {response.status_code}: {response.text}"
+            )
+        data = response.json()
+        transactions.extend(data.get("transactions", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    print(f"[tink] Fetched {len(transactions)} transactions via authorization code")
+
+    return [
+        {
+            "event_id": tx.get("id", str(uuid4())),
+            "description": (
+                tx.get("descriptions", {}).get("display")
+                or tx.get("descriptions", {}).get("original")
+                or "UNKNOWN"
+            ),
+            "amount": abs(
+                Decimal(tx.get("amount", {}).get("value", {}).get("unscaledValue", "0"))
+                / Decimal(10 ** int(tx.get("amount", {}).get("value", {}).get("scale", "0")))
+            ),
+            "currency": tx.get("amount", {}).get("currencyCode", "SEK"),
+            "created_at": datetime.strptime(
+                tx.get("dates", {}).get("booked", "2024-01-01"), "%Y-%m-%d"
+            ).replace(tzinfo=timezone.utc),
+            "source": "tink_link",
+        }
+        for tx in transactions
+    ]
+
+
+def get_account_check_transactions(
+    client_id: str,
+    client_secret: str,
+    report_id: str,
+) -> list[dict]:
+    """
+    Fetch transactions from a completed Account Check + Transactions report.
+
+    HOW THIS WORKS:
+    ───────────────
+    After a user completes the Tink Link browser flow (selecting their bank
+    and logging in), Tink creates an Account Check report containing the
+    user's account data + transaction history.
+
+    The report ID arrives in the browser callback URL:
+      https://console.tink.com/callback?account_verification_report_id=107291d3...
+
+    This is the CORRECT modern Tink API — replaces the deprecated /api/v1/credentials flow.
+
+    GET /api/v1/account-verification-reports/{reportId}/transactions
+    Authorization: Bearer {client_token}  (scope: account-verification-reports:read)
+
+    Args:
+        report_id: From the callback URL after completing Tink Link flow.
+                   Store in .env as TINK_REPORT_ID
+
+    Returns:
+        List of transaction dicts in the same format as collect_training_data()
+    """
+    client = TinkClient(client_id=client_id, client_secret=client_secret)
+    client.authenticate_as_client()
+
+    # Try the transactions sub-endpoint first
+    response = httpx.get(
+        f"{TINK_BASE_URL}/api/v1/account-verification-reports/{report_id}/transactions",
+        headers=client._client_headers(),
+        timeout=30.0,
+    )
+
+    if not response.is_success:
+        # Fallback: fetch the full report (transactions may be embedded)
+        report_response = httpx.get(
+            f"{TINK_BASE_URL}/api/v1/account-verification-reports/{report_id}",
+            headers=client._client_headers(),
+            timeout=30.0,
+        )
+        if not report_response.is_success:
+            raise RuntimeError(
+                f"fetch report failed {report_response.status_code}: {report_response.text}"
+            )
+        data = report_response.json()
+        raw_transactions = data.get("transactions", [])
+        print(f"[tink] Report keys: {list(data.keys())}")  # debug: see what's in the report
+    else:
+        raw_transactions = response.json().get("transactions", [])
+
+    print(f"[tink] Account Check report: {len(raw_transactions)} transactions")
+
+    return [
+        {
+            "event_id": tx.get("id", str(uuid4())),
+            "description": (
+                tx.get("descriptions", {}).get("display")
+                or tx.get("descriptions", {}).get("original")
+                or tx.get("description", "UNKNOWN")
+            ),
+            "amount": abs(Decimal(str(
+                int(tx.get("amount", {}).get("value", {}).get("unscaledValue", "0"))
+                / (10 ** int(tx.get("amount", {}).get("value", {}).get("scale", "0")))
+            ))),
+            "currency": tx.get("amount", {}).get("currencyCode", "NOK"),
+            "created_at": datetime.strptime(
+                tx.get("dates", {}).get("booked", "2024-01-01"), "%Y-%m-%d"
+            ).replace(tzinfo=timezone.utc),
+            "source": "tink_account_check",
+        }
+        for tx in raw_transactions
+    ]
 
 
 def collect_training_data(
@@ -372,7 +643,12 @@ def collect_training_data(
     # Step 3: Get a token scoped to this user's accounts only
     client.get_user_token(external_user_id)
 
-    # Step 4: Fetch all sandbox transactions
+    # Step 4: Connect a test bank provider (seeds the sandbox user with mock transactions)
+    # Idempotent — if already connected, fetches the existing credentials ID
+    credentials_id = client.connect_sandbox_bank()
+    client.wait_for_bank_sync(credentials_id)
+
+    # Step 5: Fetch all sandbox transactions (now populated by the bank sync)
     transactions = client.get_transactions()
 
     return [

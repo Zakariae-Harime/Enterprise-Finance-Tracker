@@ -1,249 +1,271 @@
 """
-Rule-based transaction labeler for Norwegian merchants.
+Rule-based transaction labeler for enterprise B2B financial transactions.
 
 This is Layer 1 of the 3-layer categorization system AND the auto-labeling
 engine for creating training data.
 
-  Inference time:  "REMA 1000 OSLO" → instantly returns "groceries" (0ms)
-  Training time:   labels 5,000 raw transactions without human effort
+  Inference time:  "AMAZON WEB SERVICES EMEA SARL" → instantly returns "cloud_infrastructure" (0ms)
+  Training time:   labels 5,000 raw B2B invoices without human effort
 
 Why rules first?
-  Norwegian B2B transactions follow highly predictable patterns.
-  "SAP AG" is always software. "CIRCLE K" is always fuel.
-  No ML needed for known merchants — rules are faster, cheaper, 100% accurate.
+  Enterprise B2B invoices follow highly predictable patterns.
+  "DELOITTE AS RÅDGIVNING" is always consulting_services.
+  "SALESFORCE.COM EMEA LTD" is always saas_software.
+  No ML needed for known vendors — rules are faster, cheaper, 100% accurate.
 
-Category definitions (Norwegian enterprise finance context):
-  groceries   (dagligvarer)  — REMA 1000, Kiwi, Meny, Spar, Coop
-  fuel        (drivstoff)    — Circle K, Shell, Esso, ST1, Uno-X
-  software    (programvare)  — SAP, Microsoft, Oracle, AWS, Salesforce
-  consulting  (rådgivning)   — Accenture, Deloitte, Bouvet, BEKK, Knowit
-  dining      (restaurant)   — McDonald's, Starbucks, cafés, restaurants
-  transport   (transport)    — Ruter, Vy, SAS, Uber, Bolt, Flytoget
-  utilities   (strøm/tele)   — Telenor, Hafslund, Lyse, Fjordkraft
+Category definitions (Norwegian enterprise B2B finance context):
+  saas_software         — Salesforce, Slack, GitHub, SAP, Figma, Notion, Jira
+  cloud_infrastructure  — AWS, Azure GCP, Cloudflare, DigitalOcean
+  consulting_services   — Deloitte, KPMG, McKinsey, Bouvet, Accenture, BEKK
+  travel_expenses       — SAS, Norwegian Air, Marriott, Hilton, Uber Business
+  office_facilities     — office supplies, co-working spaces, facilities management
+  marketing_advertising — Google Ads, Meta, HubSpot, LinkedIn, Mailchimp
+  telecommunications    — Telenor Bedrift, Telia, Cisco, Zoom, Webex
 """
 from dataclasses import dataclass
 from typing import Optional
 
 
-# Category Labels
-# These are the 7 categories our model will predict.
+# ─── Category Labels 
 CATEGORIES = [
-    "groceries",   # dagligvarer — supermarkets, kiosks
-    "fuel",        # drivstoff — petrol stations
-    "software",    # programvare — SaaS, cloud, licenses
-    "consulting",  # rådgivning — professional services, IT consulting
-    "dining",      # restaurant/kafe — food outside home
-    "transport",   # transport — public transit, airlines, rideshare
-    "utilities",   # strøm/telefon — electricity, internet, phone
+    "saas_software",         # SaaS platforms — Salesforce, Slack, SAP, GitHub
+    "cloud_infrastructure",  # Cloud compute/storage — AWS, GCP, Azure, Cloudflare
+    "consulting_services",   # Professional services — Big4, boutique firms, IT consulting
+    "travel_expenses",       # Business travel — flights, hotels, rideshare
+    "office_facilities",     # Office operations — supplies, co-working, facilities
+    "marketing_advertising", # Paid marketing — Google Ads, Meta, agencies
+    "telecommunications",    # Corporate comms — mobile plans, internet, VoIP
 ]
 
-# Maps category name to integer index — required by neural networks.
-# Example: "groceries" → 0, "fuel" → 1, "software" → 2, etc.
-# Neural networks output a list of numbers, not strings.
-# We use this map to convert: [0.82, 0.03, 0.01, ...] → index 0 → "groceries"
+# Maps category name → integer index (required by neural networks).
+# "saas_software" → 0, "cloud_infrastructure" → 1, "consulting_services" → 2, etc.
 CATEGORY_TO_ID = {cat: idx for idx, cat in enumerate(CATEGORIES)}
 ID_TO_CATEGORY = {idx: cat for cat, idx in CATEGORY_TO_ID.items()}
 
-#Merchant Rules 
+
+# ─── Merchant Rules
 
 # UPPERCASE keywords — we always .upper() the transaction before matching.
-# This means "rema 1000", "REMA 1000", "Rema 1000" all match equally.
-# Order matters within each category: more specific keywords first.
+# Order matters within each category: more specific keywords FIRST.
+# CRITICAL: avoid short generic words that appear across categories.
+#   BAD:  "MICROSOFT"  alone → matches "MICROSOFT AZURE" AND "MICROSOFT 365"
+#   GOOD: "MICROSOFT AZURE" → cloud_infrastructure, "MICROSOFT 365" → saas_software
 MERCHANT_RULES: dict[str, list[str]] = {
 
-    #Groceries
-    "groceries": [
-        "REMA 1000", "REMA1000",        # #1 Norwegian grocery chain
-        "KIWI",                          # #2 Norwegian grocery chain (owned by NorgesGruppen)
-        "MENY",                          # Premium supermarket chain
-        "SPAR",                          # Convenience store chain
-        "COOP PRIX", "COOP EXTRA",       # Coop cooperative chains
-        "COOP MEGA", "COOP OBS",
-        "COOP",                          # Any Coop store (catch-all, after specific ones)
-        "BUNNPRIS",                      # Discount grocery chain
-        "JOKER",                         # Small neighborhood stores
-        "EUROSPAR",                      # European Spar stores
-        "NÆRBUTIKKEN",                   # Local convenience stores
-        "NARVESEN",                      # Kiosk chain (also sells snacks/groceries)
-        "ICA",                           # Swedish chain with Norwegian stores
-        "LIDL",                          # German discount chain expanding in Norway
-        "ALDI",                          # German discount chain
+    # SaaS Software
+    # Enterprise software billed as monthly/annual per-seat subscriptions.
+    # These are OPEX, not CAPEX — no hardware, no one-time purchase.
+    "saas_software": [
+        "SALESFORCE",               # CRM platform — #1 SaaS by revenue globally
+        "SLACK TECHNOLOGIES",       # Team messaging (Salesforce-owned since 2021)
+        "SLACK",
+        "GITHUB",                   # Code hosting + CI/CD (Microsoft-owned)
+        "ATLASSIAN",                # Suite: Jira, Confluence, Bitbucket
+        "JIRA SOFTWARE",
+        "CONFLUENCE",
+        "FIGMA",                    # Design/prototyping tool
+        "NOTION",                   # Document management
+        "MIRO",                     # Online whiteboard
+        "ADOBE CREATIVE",           # Creative Cloud — design, video, PDF
+        "ADOBE",
+        "WORKDAY",                  # HR + Finance SaaS (common in large Norwegian enterprises)
+        "SERVICENOW",               # IT service management
+        "ZENDESK",                  # Customer support platform
+        "DATADOG",                  # Observability SaaS
+        "SNOWFLAKE",                # Cloud data warehouse (SaaS consumption model)
+        "MONDAY.COM",               # Project management
+        "ASANA",                    # Task management
+        "SAP SE", "SAP AG", "SAP",  # ERP — used by Equinor, DNB, Telenor
+        "ORACLE",                   # ERP + Database SaaS
+        "MICROSOFT 365",            # Office suite as subscription (not Azure)
+        "AUTODESK",                 # Engineering software (used by Aker, Statkraft)
+        # NOTE: "LISENS"/"LICENSE" removed — too generic, causes collisions
+        # ("ZOOM VIDEO COMMUNICATIONS INC LICENSE" would match saas_software instead of telecoms)
+        # Unknown license invoices fall through to TF-IDF/BERT — correct behavior.
     ],
 
-    #Fuel
-    "fuel": [
-        "CIRCLE K", "CIRCLEK",          # Largest Norwegian petrol chain (ex-Statoil)
-        "SHELL",                         # International brand, widespread in Norway
-        "ESSO",                          # ExxonMobil brand
-        "ST1", "ST 1",                   # Finnish-owned, common in Norway
-        "UNO-X", "UNOX",               # Danish-owned discount petrol
-        "BEST",                          # Independent Norwegian petrol brand
-        "YX",                            # Norwegian petrol chain (owned by OKQ8)
-        "GULF",                          # International brand
-        "STATOIL",                       # Old name — transactions pre-2012 rebrand
-        "DRIVSTOFF",                     # Norwegian for "fuel" (direct description)
+    # Cloud Infrastructure
+    # Usage-based cloud compute, storage, CDN, networking.
+    # Monthly variable invoices — scale with actual consumption.
+    # IMPORTANT: "MICROSOFT AZURE" listed here, NOT standalone "MICROSOFT"
+    "cloud_infrastructure": [
+        "AMAZON WEB SERVICES",      # AWS — #1 cloud by market share
+        "AWS EMEA",                 # AWS European invoicing entity
+        "GOOGLE CLOUD",             # GCP
+        "GOOGLE CLOUD PLATFORM",
+        "MICROSOFT AZURE",          # Azure (standalone "MICROSOFT" → saas_software)
+        "AZURE SERVICES",
+        "CLOUDFLARE",               # CDN + zero-trust security
+        "DIGITALOCEAN",             # SMB cloud
+        "HEROKU",                   # Salesforce-owned PaaS
+        "VERCEL",                   # Frontend cloud (popular in Norwegian startups)
+        "FASTLY",                   # Edge CDN
+        "AKAMAI",                   # CDN + security (used by Norwegian banks)
+        "HETZNER",                  # German cloud, popular in Europe
     ],
 
-    # Software / SaaS
-    # Enterprise software vendors common in Norwegian B2B finance.
-    "software": [
-        "SAP AG", "SAP SE", "SAP",      # ERP system used by 80% of Norwegian enterprises
-        "MICROSOFT",                     # Office 365, Azure — universal
-        "ORACLE",                        # Database, ERP (Oracle E-Business Suite)
-        "SALESFORCE",                    # CRM platform
-        "AWS", "AMAZON WEB SERVICES",   # Cloud computing
-        "AZURE",                         # Microsoft's cloud (note: also a color name!)
-        "ATLASSIAN",                     # Jira, Confluence (used heavily in tech companies)
-        "GITHUB",                        # Code repository (Microsoft-owned)
-        "SLACK",                         # Team messaging (Salesforce-owned)
-        "ADOBE",                         # Creative Cloud
-        "AUTODESK",                      # Engineering software (used by Aker, Equinor)
-        "SERVICENOW",                    # IT service management
-        "WORKDAY",                       # HR/Finance SaaS
-        "ZENDESK",                       # Customer support SaaS
-        "HUBSPOT",                       # Marketing automation
-        "JIRA",                          # Project management (Atlassian)
-        "CONFLUENCE",                    # Documentation (Atlassian)
-        "DATADOG",                       # Monitoring SaaS
-        "SNOWFLAKE",                     # Data warehouse cloud
-        "FIGMA",                         # Design tool (Adobe-owned)
-        "MIRO",                          # Online whiteboard
-        "LICENSE", "LICENS", "LISENS",  # Generic license keywords (Norwegian: lisens)
-        "SUBSCRIPTION",                  # English SaaS subscription — NOT "ABONNEMENT" (too generic, also used by telecoms)
-        "SOFTWARE", "PROGRAMVARE",      # Direct keyword match
+    # Consulting Services
+    # Professional services firms — billed as fixed-fee or time-and-materials.
+    # Norwegian enterprise consulting is dominated by Big4 + Scandinavian IT firms.
+    "consulting_services": [
+        "ACCENTURE",                # Largest IT consulting firm in Norway by revenue
+        "DELOITTE",                 # Big4 — audit + advisory + tech
+        "KPMG",                     # Big4
+        "PWC", "PRICEWATERHOUSECOOPERS",   # Big4
+        "EY NORGE", "ERNST YOUNG",  # Big4 (avoid bare "EY" — too short, risk of collision)
+        "MCKINSEY",                 # Strategy consulting — typically 150K-1M NOK invoices
+        "BCG", "BOSTON CONSULTING", # Strategy consulting
+        "BAIN",                     # Strategy consulting
+        "BOUVET",                   # Largest Norwegian-owned IT consultancy
+        "KNOWIT",                   # Norwegian IT consulting
+        "BEKK",                     # Oslo boutique tech consulting (premium rates)
+        "SOPRA STERIA",             # French-Norwegian IT
+        "CAPGEMINI",                # Global IT consulting
+        "TIETOEVRY", "TIETO", "EVRY",  # Finnish-Norwegian (merged 2019)
+        "CGI NORGE", "CGI",         # Canadian IT, large Norwegian public sector presence
+        "COMPUTAS",                 # Norwegian AI/data consulting (Visma subsidiary)
+        "AVANADE",                  # Microsoft-focused (Accenture + Microsoft JV)
+        "RÅDGIVNING",               # Norwegian: "consulting"
+        "KONSULENTBISTAND",         # Norwegian: "consultant assistance"
+        "KONSULENT",                # Norwegian: "consultant"
     ],
 
-    # Consulting 
-    # Professional services firms operating in Norway.
-    "consulting": [
-        "ACCENTURE",                     # Largest consulting firm in Norway
-        "DELOITTE",                      # Big4 — very common in Norwegian finance
-        "PWC", "PRICEWATERHOUSECOOPERS", # Big4
-        "EY", "ERNST & YOUNG",          # Big4
-        "KPMG",                          # Big4
-        "MCKINSEY",                      # Strategy consulting
-        "BCG", "BOSTON CONSULTING",     # Strategy consulting
-        "BAIN",                          # Strategy consulting
-        "BOUVET",                        # Largest Norwegian IT consultancy
-        "CAPGEMINI",                     # Global IT consulting
-        "KNOWIT",                        # Norwegian IT consulting
-        "BEKK",                          # Oslo-based tech consulting (premium)
-        "SOPRA STERIA",                  # French-Norwegian IT consulting
-        "COMPUTAS",                      # Norwegian consulting (Visma subsidiary)
-        "AVANADE",                       # Microsoft-focused consulting (Accenture/MS JV)
-        "CGI NORGE", "CGI",             # Canadian IT consulting, large in Norway
-        "INFOSYS",                       # Indian IT services
-        "TIETOEVRY", "TIETO", "EVRY",   # Finnish-Norwegian IT company (merger)
-        "RÅDGIVNING",                    # Norwegian for "consulting"
-        "KONSULENTBISTAND",              # Norwegian for "consultant assistance"
-        "KONSULENT",                     # Norwegian for "consultant"
+    # Travel & Expenses
+    # Business travel booked on corporate cards.
+    # Oslo-London, Oslo-Frankfurt, Oslo-Stockholm are the dominant corridors.
+    "travel_expenses": [
+        "SAS GROUP", "SAS AIRLINES", # Scandinavian Airlines — dominant in Nordics
+        "NORWEGIAN AIR", "NORWEGIAN.COM",     # Norwegian Air Shuttle
+        "WIDEROE", "WIDERØE",                 # Regional Norwegian airline
+        "LUFTHANSA",                           # Common Oslo-Frankfurt-rest of world
+        "BRITISH AIRWAYS",
+        "KLM",                                 # Amsterdam hub — common connection point
+        "MARRIOTT",                            # Business hotel chain
+        "HILTON",                              # Business hotel chain
+        "RADISSON",                            # Scandinavian hotel chain
+        "SCANDIC HOTELS", "SCANDIC",           # Largest Nordic hotel chain
+        "THON HOTELS", "THON",                 # Largest Norwegian-owned hotel chain
+        "NORDIC CHOICE", "CLARION",            # Norwegian hotel chain
+        "BOOKING.COM",                         # Most used in Norwegian corporate travel
+        "EXPEDIA CORPORATE",
+        "UBER BUSINESS", "UBER FOR BUSINESS",  # Specific to avoid matching personal Uber
+        "UBER",
+        "FLYTOGET",                            # Airport express Oslo
+        "FLYBUSSEN",                           # Airport bus
+        "BCD TRAVEL",                          # Corporate travel management firm
+        "CWT", "CARLSON WAGONLIT",             # Corporate travel agency
+        "VY BILLETT", "NSB",                   # Norwegian rail (business trips)
     ],
 
-    #Dining
-    "dining": [
-        "MCDONALDS", "MC DONALDS", "MCDONALD",  # Fast food #1 globally
-        "BURGER KING",                   # Fast food #2
-        "SUBWAY",                        # Sandwich chain
-        "STARBUCKS",                     # Coffee chain (limited in Norway)
-        "ESPRESSO HOUSE",               # Largest café chain in Scandinavia
-        "WAYNES COFFEE",                 # Swedish café chain common in Norway
-        "DELI DE LUCA",                 # Norwegian premium convenience/café chain
-        "7-ELEVEN",                      # Convenience + café
-        "COFFEE",                        # Generic coffee shop catch-all
-        "KAFE", "KAFÉ", "CAFE", "CAFÉ", # Norwegian/French for café
-        "RESTAURANT",                    # Generic restaurant
-        "PIZZERIA", "PIZZA",            # Pizza restaurants
-        "SUSHI",                         # Sushi restaurants (very popular in Oslo)
-        "THAI",                          # Thai restaurants
-        "KEBAB",                         # Kebab shops (common lunch option)
-        "TAPAS",                         # Tapas bars
-        "BRASSERIE",                     # French-style restaurant (common in Oslo)
-        "SERVERING",                     # Norwegian for "food service"
-        "CATERING",                      # Catering services
+    # Office & Facilities
+    # TODO(human): Add keywords for the office_facilities category.
+    # This covers physical office running costs — NOT digital subscriptions.
+    #
+    # Think about what a CFO reviews as "office & facilities" spend:
+    #   - Office supply stores (Norwegian + international)
+    #   - Co-working space providers (enterprises often use Regus, WeWork, Spaces)
+    #   - Facilities management (cleaning, security, maintenance companies)
+    #   - Shipping and postal services (Posten, DHL, FedEx)
+    #   - Office equipment (printers, copiers — Konica Minolta, Ricoh)
+    #
+    # Constraints to keep in mind:
+    #   - Do NOT use "OFFICE" alone → "MICROSOFT OFFICE" would match cloud_infrastructure
+    #   - Do NOT use "SUPPLIES" alone → too generic
+    #   - Prefer specific company names over generic English words
+    #   - Norwegian company names (AS suffix) are good candidates
+    "office_facilities": [
+        "STAPLES",                  # Office supply chain (Norway + international)
+        "OFFICELINE",               # Norwegian office supplies distributor
+        "ELKJOP BEDRIFT",           # Norwegian electronics — enterprise division only
+        "REGUS",                    # Co-working spaces (IWG brand)
+        "IWG", "SPACES",            # International Workplace Group — Regus parent company
+        "WEWORK",                   # Co-working spaces
+        "KONICA MINOLTA",           # Printer/copier fleet management
+        "RICOH",                    # Printer/copier fleet management
+        "ISS FACILITY",             # Facilities management (cleaning, maintenance)
+        "SODEXO",                   # Facilities + catering services
+        "SECURITAS",                # Security services
+        "POSTEN NORGE",             # Norwegian postal/shipping
+        "DHL EXPRESS",              # International courier
+        "KONTORREKVISITA",          # Norwegian: "office supplies"
+        "KONTORUTSTYR",             # Norwegian: "office equipment"
     ],
 
-    # Transport
-    "transport": [
-        "RUTER",                         # Oslo's public transit authority (bus/metro/tram)
-        "NSB", "VY",                     # Norwegian state railways (rebranded NSB → Vy)
-        "FLYTOGET",                      # Airport express train Oslo
-        "SAS",                           # Scandinavian Airlines (largest in Norway)
-        "NORWEGIAN",                     # Norwegian Air Shuttle (low-cost carrier)
-        "WIDERØE",                       # Regional Norwegian airline
-        "FLYBUSSEN",                     # Airport bus service
-        "UBER",                          # Rideshare
-        "BOLT",                          # European rideshare (dominant in Oslo)
-        "ENTUR",                         # Norwegian national journey planner/ticketing
-        "ATBUSSEN",                      # Trondheim public transit
-        "KOLUMBUS",                      # Rogaland (Stavanger) public transit
-        "SKYSS",                         # Bergen public transit
-        "FJORD1",                        # Norwegian ferry company
-        "NORLED",                        # Ferry and express boat operator
-        "TAXI",                          # Generic taxi
-        "FLYTAXI",                       # Airport taxi
-        "BUSS",                          # Norwegian for "bus"
-        "HURTIGBÅT",                     # Express boat (western Norway fjords)
-        "PARKERING", "PARKERINGSHUS",   # Parking — often part of transport budget
-        "AUTOPASS",                      # Norwegian road toll (electronic)
-        "BOMRING", "BOM",               # Toll ring (common in Oslo, Bergen, etc.)
+    # Marketing & Advertising
+    # Paid media spend and marketing automation platforms.
+    # Collision risk: Google also has "GOOGLE CLOUD" → solved by listing
+    # "GOOGLE CLOUD" under cloud_infrastructure first (dict order = precedence).
+    "marketing_advertising": [
+        "GOOGLE ADS",               # Google paid search/display
+        "GOOGLE ANALYTICS",         # GA4 paid tier
+        "META PLATFORMS",           # Facebook + Instagram Ads invoicing entity
+        "META ADS",
+        "LINKEDIN ADS", "LINKEDIN MARKETING",  # B2B advertising
+        "MAILCHIMP",                # Email marketing
+        "HUBSPOT",                  # Marketing automation (also CRM — billing says "marketing")
+        "MARKETO",                  # Adobe marketing automation
+        "HOOTSUITE",                # Social media management
+        "SEMRUSH",                  # SEO tooling
+        "AHREFS",                   # SEO tooling
+        "HOTJAR",                   # UX analytics
+        "ADFORM",                   # Scandinavian ad tech platform
+        "KLAVIYO",                  # E-commerce email marketing
+        "ANNONSERING",              # Norwegian: "advertising"
+        "MARKEDSFØRING",            # Norwegian: "marketing"
     ],
 
-    #Utilities
-    "utilities": [
-        "TELENOR",                       # Largest Norwegian telecom
-        "TELIA",                         # Swedish-Norwegian telecom
-        "ICE",                           # Norwegian mobile network
-        "HAFSLUND",                      # Oslo electricity grid operator
-        "LYSE",                          # Stavanger region energy company
-        "FJORDKRAFT",                    # Norwegian electricity retailer
-        "TIBBER",                        # Norwegian tech-focused electricity company
-        "GET",                           # Norwegian cable TV + internet
-        "ALTIBOX",                       # Norwegian fiber internet
-        "NEXTGENTEL",                    # Norwegian internet provider
-        "TELIO",                         # Norwegian VoIP
-        "STROM", "STRØM",              # Norwegian for "electricity"
-        "NETTLEIE",                      # Norwegian for "grid rental" (part of electricity bill)
-        "ELEKTRISK",                     # Norwegian for "electrical"
-        "INTERNETT",                     # Norwegian for "internet"
-        "MOBILABONNEMENT",              # Norwegian for "mobile subscription"
-        "BREDBÅND",                      # Norwegian for "broadband"
-        "VANN OG AVLOP",                # Water and sewage
-        "RENOVASJON",                    # Waste collection
+    # Telecommunications
+    # Corporate communication infrastructure — mobile plans, broadband, VoIP, video.
+    # "MICROSOFT TEAMS" is part of Microsoft 365 → covered under saas_software.
+    "telecommunications": [
+        "TELENOR BEDRIFT",          # Telenor's enterprise division (not consumer Telenor)
+        "TELENOR",                  # Fallback — any Telenor invoice
+        "TELIA BEDRIFT", "TELIA FÖRETAG", "TELIA",  # Swedish-Norwegian telecom
+        "ICE KOMMUNIKASJON", "ICE.NET",    # Norwegian 5G operator
+        "CISCO SYSTEMS",            # Network infrastructure + Webex
+        "CISCO WEBEX", "WEBEX",    # Video conferencing (Cisco)
+        "ZOOM VIDEO COMMUNICATIONS", "ZOOM",   # Video conferencing
+        "RINGCENTRAL",              # Cloud PBX / VoIP
+        "TELIO",                    # Norwegian VoIP
+        "MOBILABONNEMENT",          # Norwegian: "mobile subscription"
+        "BREDBÅND", "BREDBAND",    # Norwegian: "broadband"
+        "INTERNETT",                # Norwegian: "internet" (corporate line)
     ],
 }
 
 
-#Labeling Functions
+# ─── Labeling Functions ────────────────────────────────────────────────────────
+
 @dataclass
 class LabelResult:
     """Result from auto_label() — includes confidence for downstream decisions."""
-    category: Optional[str]   # Category name, or None if not matched
-    confidence: float         # 1.0 for rules (always certain), 0.0 if no match
+    category: Optional[str]       # Category name, or None if not matched
+    confidence: float             # 1.0 for rules (always certain), 0.0 if no match
     matched_keyword: Optional[str]  # Which keyword triggered the match (for debugging)
 
 
 def auto_label(description: str) -> LabelResult:
     """
-    Label a transaction description using merchant rules.
+    Label a B2B transaction description using merchant rules.
 
     How it works:
         1. Convert description to UPPERCASE (case-insensitive matching)
         2. For each category, check if ANY keyword appears in the description
-        3. Return first match found (most specific categories listed first in MERCHANT_RULES)
-        4. Return None if no keyword matches
+        3. Return first match found (categories ordered by precedence in MERCHANT_RULES)
+        4. Return None if no keyword matches — transaction goes to TF-IDF then BERT
 
     Args:
         description: Raw transaction description from bank
-                     Example: "REMA 1000 MAJORSTUEN    NOK 250.00"
+                     Example: "AMAZON WEB SERVICES EMEA SARL NOK 45231.50"
 
     Returns:
-        LabelResult with category="groceries", confidence=1.0 if REMA 1000 matched
+        LabelResult with category="cloud_infrastructure", confidence=1.0 if matched
 
     Example:
-        >>> auto_label("SAP AG SOFTWARE LICENSE NOK 15000")
-        LabelResult(category="software", confidence=1.0, matched_keyword="SAP AG")
+        >>> auto_label("DELOITTE AS RÅDGIVNING NOK 250000")
+        LabelResult(category="consulting_services", confidence=1.0, matched_keyword="DELOITTE")
 
-        >>> auto_label("UKJENT FORRETNING AS")  # Unknown merchant
+        >>> auto_label("UKJENT LEVERANDOR AS")  # Unknown vendor
         LabelResult(category=None, confidence=0.0, matched_keyword=None)
     """
     description_upper = description.upper()
@@ -263,11 +285,9 @@ def auto_label(description: str) -> LabelResult:
 
 def label_batch(descriptions: list[str]) -> list[LabelResult]:
     """
-    Label a list of transaction descriptions.
+    Label a list of B2B transaction descriptions.
 
-    Used in prepare_dataset.py to label thousands of transactions at once.
-    Pure Python loop — no GPU needed, no network calls.
-    Labels 10,000 transactions in under 100ms.
+    Labels 10,000 invoices in under 100ms — pure Python, no GPU needed.
 
     Args:
         descriptions: List of raw transaction descriptions
@@ -276,9 +296,9 @@ def label_batch(descriptions: list[str]) -> list[LabelResult]:
         List of LabelResult objects, one per description
 
     Example:
-        >>> label_batch(["REMA 1000 OSLO", "SAP AG LIZENZ", "UNKNOWN SHOP"])
-        [LabelResult("groceries", 1.0, "REMA 1000"),
-         LabelResult("software", 1.0, "SAP AG"),
+        >>> label_batch(["SALESFORCE CRM", "AWS EMEA CLOUD", "UNKNOWN VENDOR AS"])
+        [LabelResult("saas_software", 1.0, "SALESFORCE"),
+         LabelResult("cloud_infrastructure", 1.0, "AWS EMEA"),
          LabelResult(None, 0.0, None)]
     """
     return [auto_label(desc) for desc in descriptions]
@@ -288,19 +308,19 @@ def get_coverage_stats(descriptions: list[str]) -> dict:
     """
     Calculate what percentage of transactions our rules can label.
 
-    Run this on your GoCardless data to understand how much training data
-    needs manual review vs. automatic labeling.
+    Run this on Tink/GoCardless data to understand auto-labeling coverage
+    before committing time to BERT training.
 
     Output example:
         {
             "total": 5000,
-            "labeled": 4100,         # 82% matched by rules
-            "unlabeled": 900,        # 18% need TF-IDF or BERT
+            "labeled": 4100,
+            "unlabeled": 900,
             "coverage_pct": 82.0,
             "by_category": {
-                "groceries": 1200,   # 24% of all transactions
-                "fuel": 450,
-                "software": 380,
+                "saas_software": 1200,
+                "cloud_infrastructure": 800,
+                "consulting_services": 600,
                 ...
             }
         }
@@ -315,6 +335,6 @@ def get_coverage_stats(descriptions: list[str]) -> dict:
         "total": len(descriptions),
         "labeled": len(labeled),
         "unlabeled": len(descriptions) - len(labeled),
-        "coverage_pct": round(len(labeled) / len(descriptions) * 100, 1),
+        "coverage_pct": round(len(labeled) / len(descriptions) * 100, 1) if descriptions else 0.0,
         "by_category": by_category,
     }

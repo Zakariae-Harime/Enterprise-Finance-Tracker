@@ -25,7 +25,7 @@ from src.api.schemas.transaction import (
 
 
 )
-from src.api.dependencies import get_event_store
+from src.api.dependencies import get_event_store, get_categorizer
 from src.domain.events_store import EventStore, AggregateNotFoundError
 
 
@@ -46,9 +46,13 @@ TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 async def create_transaction(
     request: CreateTransactionRequest,
     event_store: EventStore = Depends(get_event_store),
+    categorizer=Depends(get_categorizer),
 ) -> TransactionCreatedResponse:
     """
     Creates a transaction by appending a TransactionCreated event.
+
+    If no category is provided in the request, the ML categorizer runs
+    automatically and appends a TransactionCategorized event immediately after.
 
     The event is stored in the event store AND written to the outbox
     for Kafka delivery (outbox pattern guarantees at-least-once delivery).
@@ -75,10 +79,34 @@ async def create_transaction(
         tenant_id=TENANT_ID,
     )
 
+    # Auto-categorize if no category was provided and categorizer is available
+    auto_category = None
+    if request.category is None and categorizer is not None:
+        description_for_ml = request.description or request.merchant_name or ""
+        if description_for_ml:
+            result = categorizer.categorize(description_for_ml)
+            auto_category = result.category
+            cat_event = TransactionCategorized(
+                aggregate_id=transaction_id,
+                metadata=EventMetadata(),
+                category=result.category,
+                confidence_score=result.confidence,
+                categorized_by=f"ml:{result.layer}",
+                previous_category=None,
+            )
+            await event_store.append_events(
+                aggregate_id=transaction_id,
+                aggregate_type="Transaction",
+                new_events=[cat_event],
+                expected_version=1,
+                tenant_id=TENANT_ID,
+            )
+
     return TransactionCreatedResponse(
         transaction_id=transaction_id,
         status="created",
-        message=f"Transaction at '{request.merchant_name}' for {request.amount} {request.currency.value} created",
+        message=f"Transaction at '{request.merchant_name}' for {request.amount} {request.currency.value} created"
+                + (f" — auto-categorized as '{auto_category}'" if auto_category else ""),
     )
 
 

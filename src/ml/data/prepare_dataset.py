@@ -94,6 +94,66 @@ def load_synthetic_data(n_per_category: int = 500) -> pd.DataFrame:
     return df
 
 
+def load_tink_data(client_id: str, client_secret: str, report_id: str = "", auth_code: str = "") -> pd.DataFrame:
+    """
+    Fetch real transactions from Tink and auto-label them.
+
+    Two modes:
+      report_id provided → Account Check flow (modern Tink API, uses browser-completed report)
+      no report_id       → Legacy user/token flow (sandbox only, limited transactions)
+
+    Returns:
+        DataFrame with columns: [description, category, label_id, source]
+        Only rows where auto_label() found a match (unlabeled rows excluded).
+    """
+    print("[prepare] Fetching Tink transactions...")
+
+    if auth_code:
+        from src.ml.data.tink_collector import exchange_code_for_transactions
+        print(f"[prepare] Using authorization code: {auth_code[:8]}...")
+        raw_transactions = exchange_code_for_transactions(
+            client_id=client_id,
+            client_secret=client_secret,
+            authorization_code=auth_code,
+        )
+    elif report_id:
+        from src.ml.data.tink_collector import get_account_check_transactions
+        print(f"[prepare] Using Account Check report: {report_id[:8]}...")
+        raw_transactions = get_account_check_transactions(
+            client_id=client_id,
+            client_secret=client_secret,
+            report_id=report_id,
+        )
+    else:
+        from src.ml.data.tink_collector import collect_training_data
+        raw_transactions = collect_training_data(
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+
+    print(f"[prepare] Tink returned {len(raw_transactions)} raw transactions")
+
+    stats = get_coverage_stats([tx["description"] for tx in raw_transactions])
+    print(f"[prepare] Rule coverage: {stats['coverage_pct']}% auto-labeled")
+
+    records = []
+    for tx in raw_transactions:
+        result = auto_label(tx["description"])
+        if result.category is not None:
+            records.append({
+                "description": tx["description"],
+                "category": result.category,
+                "label_id": CATEGORY_TO_ID[result.category],
+                "source": "tink_sandbox",
+            })
+
+    df = pd.DataFrame(records) if records else pd.DataFrame(
+        columns=["description", "category", "label_id", "source"]
+    )
+    print(f"[prepare] Tink labeled: {len(df)} transactions")
+    return df
+
+
 def load_gocardless_data(secret_id: str, secret_key: str) -> pd.DataFrame:
     """
     Fetch real transactions from GoCardless sandbox and auto-label them.
@@ -263,8 +323,9 @@ def train_tfidf_baseline(
                 C=1.0,                # Regularization strength (1.0 = balanced)
                                       # Low C = more regularization = less overfitting
                                       # High C = less regularization = might overfit
-                multi_class="multinomial",  # True multi-class (not one-vs-rest)
                 solver="lbfgs",       # Limited-memory BFGS optimizer — fast for medium data
+                                      # lbfgs handles multinomial multi-class natively;
+                                      # multi_class param removed in sklearn 1.7+
                 class_weight="balanced",   # Automatically handles class imbalance
                                            # Gives more weight to minority classes
                 random_state=42,
@@ -332,21 +393,30 @@ def run(
     use_gocardless: bool = False,
     gocardless_secret_id: str = "",
     gocardless_secret_key: str = "",
+    use_tink: bool = False,
+    tink_client_id: str = "",
+    tink_client_secret: str = "",
+    tink_report_id: str = "",
+    tink_auth_code: str = "",
 ) -> None:
     """
     Full dataset preparation pipeline.
 
     Steps:
         1. Load synthetic data (always — fills bulk of training)
-        2. Load GoCardless data (optional — real bank transactions)
-        3. Combine sources and deduplicate
-        4. Split 70/15/15
-        5. Save Parquet splits
-        6. Train TF-IDF baseline + save as joblib
-        7. Print final statistics
+        2. Load Tink data (optional — real PSD2 sandbox transactions)
+        3. Load GoCardless data (optional — real bank transactions)
+        4. Combine sources and deduplicate
+        5. Split 70/15/15
+        6. Save Parquet splits
+        7. Train TF-IDF baseline + save as joblib
+        8. Print final statistics
 
     Args:
         n_per_category:          Synthetic transactions per category (500 recommended)
+        use_tink:                Fetch Tink sandbox transactions?
+        tink_client_id:          Tink app client ID
+        tink_client_secret:      Tink app client secret
         use_gocardless:          Fetch real GoCardless sandbox transactions?
         gocardless_secret_id:    GoCardless credentials
         gocardless_secret_key:   GoCardless credentials
@@ -357,6 +427,14 @@ def run(
 
     # ── Step 1: Load data ──────────────────────────────────────────────────────
     dfs = [load_synthetic_data(n_per_category=n_per_category)]
+
+    if use_tink and tink_client_id:
+        try:
+            tink_df = load_tink_data(tink_client_id, tink_client_secret, tink_report_id, tink_auth_code)
+            if len(tink_df) > 0:
+                dfs.append(tink_df)
+        except Exception as e:
+            print(f"[prepare] Tink failed (using synthetic only): {e}")
 
     if use_gocardless and gocardless_secret_id:
         try:
@@ -423,6 +501,11 @@ def run(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare ML training dataset")
     parser.add_argument("--n-per-category", type=int, default=500)
+    parser.add_argument("--use-tink", action="store_true")
+    parser.add_argument("--tink-client-id", default=os.environ.get("TINK_CLIENT_ID", ""))
+    parser.add_argument("--tink-client-secret", default=os.environ.get("TINK_CLIENT_SECRET", ""))
+    parser.add_argument("--tink-report-id", default=os.environ.get("TINK_REPORT_ID", ""))
+    parser.add_argument("--tink-auth-code", default="")
     parser.add_argument("--use-gocardless", action="store_true")
     parser.add_argument("--gc-secret-id", default=os.environ.get("GOCARDLESS_SECRET_ID", ""))
     parser.add_argument("--gc-secret-key", default=os.environ.get("GOCARDLESS_SECRET_KEY", ""))
@@ -430,6 +513,11 @@ if __name__ == "__main__":
 
     run(
         n_per_category=args.n_per_category,
+        use_tink=args.use_tink,
+        tink_client_id=args.tink_client_id,
+        tink_client_secret=args.tink_client_secret,
+        tink_report_id=args.tink_report_id,
+        tink_auth_code=args.tink_auth_code,
         use_gocardless=args.use_gocardless,
         gocardless_secret_id=args.gc_secret_id,
         gocardless_secret_key=args.gc_secret_key,
