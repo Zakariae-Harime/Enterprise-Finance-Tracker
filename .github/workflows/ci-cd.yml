@@ -68,13 +68,10 @@ jobs:
       # large binaries (170MB ONNX) — unsuitable for git.
       - name: Download ML models from ADLS
         env:
-          AZURE_STORAGE_ACCOUNT: financetrackerdl
-          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}
+          CONN_STR: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
-          mkdir -p src/ml/models
-          az storage blob download --container-name models --name tfidf_vectorizer.joblib --file src/ml/models/tfidf_vectorizer.joblib
-          az storage blob download --container-name models --name tfidf_classifier.joblib  --file src/ml/models/tfidf_classifier.joblib
-          az storage blob download --container-name models --name categorizer_int8.onnx    --file src/ml/models/categorizer_int8.onnx
+          pip install azure-storage-blob --quiet
+          python3 .github/scripts/download_models.py
 
       # Authenticate Docker to your private ACR using admin credentials.
       # Secrets are set in GitHub → Settings → Secrets and variables → Actions.
