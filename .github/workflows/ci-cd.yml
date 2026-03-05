@@ -67,25 +67,11 @@ jobs:
       # before docker build runs. Models are stored in ADLS because they're
       # large binaries (170MB ONNX) — unsuitable for git.
       - name: Download ML models from ADLS
-        env:
-          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           mkdir -p src/ml/models
-          az storage blob download \
-            --container-name models \
-            --name tfidf_vectorizer.joblib \
-            --file src/ml/models/tfidf_vectorizer.joblib \
-            --connection-string "$AZURE_STORAGE_CONNECTION_STRING"
-          az storage blob download \
-            --container-name models \
-            --name tfidf_classifier.joblib \
-            --file src/ml/models/tfidf_classifier.joblib \
-            --connection-string "$AZURE_STORAGE_CONNECTION_STRING"
-          az storage blob download \
-            --container-name models \
-            --name categorizer_int8.onnx \
-            --file src/ml/models/categorizer_int8.onnx \
-            --connection-string "$AZURE_STORAGE_CONNECTION_STRING"
+          az storage blob download --container-name models --name tfidf_vectorizer.joblib --file src/ml/models/tfidf_vectorizer.joblib --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az storage blob download --container-name models --name tfidf_classifier.joblib  --file src/ml/models/tfidf_classifier.joblib  --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+          az storage blob download --container-name models --name categorizer_int8.onnx    --file src/ml/models/categorizer_int8.onnx    --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
 
       # Authenticate Docker to your private ACR using admin credentials.
       # Secrets are set in GitHub → Settings → Secrets and variables → Actions.
