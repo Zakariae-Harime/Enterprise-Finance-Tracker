@@ -6,7 +6,10 @@ import os
 import pathlib
 from azure.storage.blob import BlobServiceClient
 
-conn_str = os.environ["CONN_STR"]
+conn_str = os.environ.get("CONN_STR", "")
+if not conn_str:
+    raise ValueError("CONN_STR environment variable is empty — check GitHub secret AZURE_STORAGE_CONNECTION_STRING")
+
 client = BlobServiceClient.from_connection_string(conn_str)
 
 pathlib.Path("src/ml/models").mkdir(parents=True, exist_ok=True)

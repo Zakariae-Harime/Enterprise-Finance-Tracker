@@ -11,6 +11,7 @@ import asyncpg
 import os
 from aiokafka import AIOKafkaProducer
 from fastapi.middleware.cors import CORSMiddleware
+from src.api.routes.auth import router as auth_router
 from src.api.routes.accounts import router as accounts_router
 from src.api.routes.transactions import router as transactions_router
 from src.api.routes.budgets import router as budgets_router
@@ -71,6 +72,7 @@ app.add_middleware(
      allow_credentials=True, # Allow cookies and auth headers
     )
 #Register API routes
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(accounts_router, prefix="/api/v1")
 app.include_router(transactions_router, prefix="/api/v1")
 app.include_router(budgets_router, prefix="/api/v1")

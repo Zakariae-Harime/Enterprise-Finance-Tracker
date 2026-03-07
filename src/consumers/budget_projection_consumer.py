@@ -21,8 +21,6 @@ import logging
 from datetime import datetime, timezone, date
 from decimal import Decimal
 from uuid import UUID
-from uuid import uuid4
-from uuid6 import uuid6
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from src.infrastructure.kafka_consumer import IdempotentConsumer

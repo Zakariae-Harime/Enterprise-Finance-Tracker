@@ -243,6 +243,34 @@ CREATE TABLE events (
       FOR EACH ROW
       EXECUTE FUNCTION update_updated_at_column();
 
+-- AUTHENTICATION
+
+-- Core user identity. One user can belong to multiple organizations.
+CREATE TABLE users (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email           VARCHAR(255) UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL,
+    full_name       VARCHAR(255),
+    is_active       BOOLEAN DEFAULT TRUE,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index on email because every login does: SELECT * FROM users WHERE email = $1
+CREATE INDEX idx_users_email ON users(email);
+
+-- Refresh tokens — stored so we can revoke them (logout, security breach)
+-- Access tokens are NOT stored — they self-expire via signature
+CREATE TABLE refresh_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked     BOOLEAN DEFAULT FALSE,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
+
      -- Organizations (multi-tenant)
   CREATE TABLE organizations (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,6 +1,5 @@
 name: CI/CD Pipeline
 
-# ─── WHEN THIS RUNS ──────────────────────────────────────────────────────────
 # Every push and pull request targeting main triggers the test job.
 # Only a direct push to main (i.e. a merged PR) also triggers build-push.
 on:
@@ -47,11 +46,9 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit -v --tb=short --cov=src --cov-report=term-missing
 
-  # ═══════════════════════════════════════════════════════════════════════════
   # JOB 2 — BUILD & PUSH TO ACR
   # Only runs on direct pushes to main (not PRs) AND only if tests passed.
   # Downloads ML models from ADLS, builds the Docker image, pushes to ACR.
-  # ═══════════════════════════════════════════════════════════════════════════
   build-push:
     name: Build & Push to ACR
     runs-on: ubuntu-latest
