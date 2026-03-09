@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from decimal import Decimal
 from datetime import datetime, timezone
 
+from src.auth.dependencies import get_current_user, UserContext
 from src.api.schemas.account import ( AccountCreatingRequest,   #Validates incoming JSON for POST /accounts
 AccountResponse, # Defines response shape after creation 
 AccountCreatedResponse)  #Defines response shape for GET /accounts/{id} /Fetching 
@@ -35,7 +36,8 @@ router = APIRouter(
               status_code=status.HTTP_201_CREATED,
               summary="Create a new account")
 async def create_account(
-    request: AccountCreatingRequest,  #FastAPI auto-parses JSON body into thi
+    request: AccountCreatingRequest,  #FastAPI auto-parses JSON body into this Pydantic model, also validates required fields and types
+    current_user: UserContext = Depends(get_current_user), #Injects authenticated user info from
     event_store: EventStore = Depends(get_event_store) 
 ) -> AccountCreatedResponse:
     """  
@@ -55,8 +57,7 @@ async def create_account(
     account_type=request.account_type.value,
     initial_balance=request.initial_balance
     )
-    tenant_id = UUID("00000000-0000-0000-0000-000000000001")
-
+    tenant_id = current_user.organization_id
     await event_store.append_events(
         aggregate_id=event.aggregate_id,
         aggregate_type="Account",
@@ -75,6 +76,7 @@ async def create_account(
 async def get_account(
     account_id: UUID,
     event_store: EventStore = Depends(get_event_store),
+    current_user: UserContext = Depends(get_current_user),
     db_pool=Depends(get_db_pool),              # NEW: direct pool for projection query
 ) -> AccountResponse:
     """

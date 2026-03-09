@@ -32,6 +32,7 @@ src/ml/models/final_model/
 
 # Claude Code internal
 .claude/
+docs/plans/
 
 # Environment variables (secrets!)
 .env

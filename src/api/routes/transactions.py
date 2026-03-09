@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from datetime import datetime, timezone
 import json
 from src.domain import EventMetadata, TransactionCreated, TransactionCategorized, TransactionDisputed
+from src.auth.dependencies import get_current_user, UserContext
 
 from src.api.schemas.transaction import (
     CreateTransactionRequest,
@@ -34,8 +35,6 @@ router = APIRouter(
     tags=["transactions"]
 )
 
-TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
-
 
 @router.post(
     "/",
@@ -45,9 +44,11 @@ TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 )
 async def create_transaction(
     request: CreateTransactionRequest,
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
     categorizer=Depends(get_categorizer),
 ) -> TransactionCreatedResponse:
+
     """
     Creates a transaction by appending a TransactionCreated event.
 
@@ -76,7 +77,7 @@ async def create_transaction(
         aggregate_type="Transaction",
         new_events=[event],
         expected_version=0,
-        tenant_id=TENANT_ID,
+        tenant_id=current_user.organization_id,
     )
 
     # Auto-categorize if no category was provided and categorizer is available
@@ -99,7 +100,7 @@ async def create_transaction(
                 aggregate_type="Transaction",
                 new_events=[cat_event],
                 expected_version=1,
-                tenant_id=TENANT_ID,
+                tenant_id=current_user.organization_id,
             )
 
     return TransactionCreatedResponse(
@@ -208,6 +209,7 @@ def replay_transaction_events(events: list[dict]) -> dict:
 )
 async def get_transaction(
     transaction_id: UUID,
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
 ) -> TransactionResponse:
     """
@@ -220,7 +222,7 @@ async def get_transaction(
         events = await event_store.load_events(
             aggregate_id=transaction_id,
             aggregate_type="Transaction",
-            tenant_id=TENANT_ID,
+            tenant_id=current_user.organization_id,
         )
     except AggregateNotFoundError:
         raise HTTPException(
@@ -238,10 +240,12 @@ async def get_transaction(
     summary="List transactions with pagination",
 )
 async def list_transactions(
-    limit: int = Query(default=20, ge=1, le=100, description="Max transactions to return"),
-    offset: int = Query(default=0, ge=0, description="Number of transactions to skip"),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
 ) -> TransactionListResponse:
+
     """
     Lists transactions by querying the event store for all Transaction aggregates.
 
@@ -256,7 +260,7 @@ async def list_transactions(
             FROM events
             WHERE aggregate_type = 'Transaction' AND tenant_id = $1
             """,
-            TENANT_ID,
+            current_user.organization_id,
         )
 
         # Get paginated list of transaction aggregate IDs (ordered by first event)
@@ -271,7 +275,7 @@ async def list_transactions(
             ORDER BY aggregate_id, created_at ASC
             LIMIT $2 OFFSET $3
             """,
-            TENANT_ID,
+            current_user.organization_id,
             limit,
             offset,
         )
@@ -308,6 +312,7 @@ async def list_transactions(
 async def categorize_transaction(
     transaction_id: UUID,
     request: CategorizeTransactionRequest,
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
 ) -> TransactionUpdatedResponse:
     """
@@ -331,7 +336,7 @@ async def categorize_transaction(
         events = await event_store.load_events(
             aggregate_id=transaction_id,
             aggregate_type="Transaction",
-            tenant_id=TENANT_ID,
+            tenant_id=current_user.organization_id,
         )
     except AggregateNotFoundError:
         raise HTTPException(
@@ -356,7 +361,7 @@ async def categorize_transaction(
         aggregate_type="Transaction",
         new_events=[event],
         expected_version=current_version, # This ensures we don't overwrite concurrent changes, the key difference from POST
-        tenant_id=TENANT_ID, #POST uses 0, this uses current version
+        tenant_id=current_user.organization_id, #POST uses 0, this uses current version
     )
     return TransactionUpdatedResponse(
         transaction_id=transaction_id,
@@ -372,6 +377,7 @@ async def categorize_transaction(
 async def dispute_transaction(
     transaction_id: UUID,
     request: DisputeTransactionRequest,
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
 ) -> TransactionUpdatedResponse:
     """
@@ -387,7 +393,7 @@ async def dispute_transaction(
         events = await event_store.load_events(
             aggregate_id=transaction_id,
             aggregate_type="Transaction",
-            tenant_id=TENANT_ID,
+            tenant_id=current_user.organization_id,
         )
     except AggregateNotFoundError:
         raise HTTPException(
@@ -413,7 +419,7 @@ async def dispute_transaction(
         aggregate_type="Transaction",
         new_events=[event],
         expected_version=current_version, # This ensures we don't overwrite concurrent changes, the key difference from POST
-        tenant_id=TENANT_ID, #POST uses 0, this uses current version
+        tenant_id=current_user.organization_id, #POST uses 0, this uses current version
     )
     return TransactionUpdatedResponse(
         transaction_id=transaction_id,

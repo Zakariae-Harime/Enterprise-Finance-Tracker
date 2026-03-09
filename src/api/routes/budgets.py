@@ -23,21 +23,16 @@ from src.api.schemas.budget import (
     BudgetResponse,
     BudgetStatus,
 )
+from src.auth.dependencies import get_current_user, UserContext
 from src.api.dependencies import get_db_pool, get_event_store
 from src.domain.events_store import EventStore, AggregateNotFoundError
 from src.domain import EventMetadata, BudgetCreated, Currency, ExpenseCategory
-
 router = APIRouter(
     prefix="/budgets",
     tags=["budgets"],
 )
 
-# Hardcoded tenant — same pattern as accounts and transactions routes
-TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
-
-
-# -- CREATE --------------------------------------------------------------------
-
+# -- CREATE
 @router.post(
     "/",
     response_model=BudgetCreatedResponse,
@@ -46,6 +41,7 @@ TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 )
 async def create_budget(
     request: CreateBudgetRequest,
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
 ) -> BudgetCreatedResponse:
     """
@@ -87,7 +83,7 @@ async def create_budget(
         aggregate_type="Budget",
         new_events=[event],
         expected_version=0,
-        tenant_id=TENANT_ID,
+        tenant_id=current_user.organization_id, #POST uses 0, this uses current version
     )
 
     return BudgetCreatedResponse(
@@ -106,6 +102,7 @@ async def create_budget(
 )
 async def get_budget(
     budget_id: UUID,
+    current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
     db_pool=Depends(get_db_pool),
 ) -> BudgetResponse:
@@ -160,7 +157,7 @@ async def get_budget(
         events = await event_store.load_events(
             aggregate_id=budget_id,
             aggregate_type="Budget",
-            tenant_id=TENANT_ID,
+            tenant_id=current_user.organization_id,
         )
     except AggregateNotFoundError:
         raise HTTPException(status_code=404, detail=f"Budget {budget_id} not found")
@@ -185,7 +182,7 @@ async def get_budget(
     )
 
 
-# -- LIST ALL ------------------------------------------------------------------
+#  LIST ALL 
 
 @router.get(
     "/",
@@ -193,6 +190,7 @@ async def get_budget(
     summary="List all budgets",
 )
 async def list_budgets(
+    current_user: UserContext = Depends(get_current_user),
     db_pool=Depends(get_db_pool),
 ) -> list[BudgetResponse]:
     """Query: all budgets for the current tenant from the projection table."""
@@ -206,7 +204,7 @@ async def list_budgets(
             WHERE user_id = $1
             ORDER BY month DESC
             """,
-            TENANT_ID,
+            current_user.organization_id,
         )
 
     result = []
