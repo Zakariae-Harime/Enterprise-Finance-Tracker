@@ -18,9 +18,13 @@ onnxruntime>=1.17.0       # Runs categorizer_int8.onnx — no PyTorch needed
 pandas>=2.1.0
 pyarrow>=15.0.0
 
+# === ERP Adapters ===
+aiohttp>=3.9.0            # Async HTTP client — used by all 6 ERP adapters
+
 # === Utilities ===
 python-jose[cryptography]
 passlib[bcrypt]
+cryptography>=42.0.0      # Fernet symmetric encryption for ERP credentials
 httpx>=0.26.0
 uuid6>=2024.1.12
 

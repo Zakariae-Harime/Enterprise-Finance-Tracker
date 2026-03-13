@@ -17,6 +17,7 @@ from src.api.routes.transactions import router as transactions_router
 from src.api.routes.budgets import router as budgets_router
 from src.api.routes.organizations import router as organizations_router
 from src.api.routes.expenses import router as expenses_router
+from src.api.routes.integrations import router as integrations_router
 from src.ml.categorizer import TransactionCategorizer
 
 @asynccontextmanager
@@ -80,6 +81,7 @@ app.include_router(transactions_router, prefix="/api/v1")
 app.include_router(budgets_router, prefix="/api/v1")
 app.include_router(organizations_router, prefix="/api/v1")
 app.include_router(expenses_router, prefix="/api/v1")
+app.include_router(integrations_router, prefix="/api/v1")
 
 @app.get("/health")
 async def health_check():

@@ -27,9 +27,13 @@ azure-ai-ml>=1.12.0       # Azure ML v2 SDK: submit training jobs from your lapt
 # === Data Processing ===
 pandas>=2.1.0             # DataFrames for aggregations
 
+# === ERP Adapters ===
+aiohttp>=3.9.0            # Async HTTP client — used by all 6 ERP adapters
+
 # === Utilities ===
 python-jose[cryptography] # JWT tokens for auth
 passlib[bcrypt]           # Password hashing
+cryptography>=42.0.0      # Fernet symmetric encryption for ERP credentials
 httpx>=0.26.0             # Async HTTP client (for GoCardless API)
 uuid6>=2024.1.12          # UUID7 support (time-ordered UUIDs, RFC 9562)
 # === Azure Data Lake ===
