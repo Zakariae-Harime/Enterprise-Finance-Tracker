@@ -4,7 +4,6 @@ Shared data models for ERP integration — Data Transfer Objects (DTOs).
 These are pure data containers. No logic, no HTTP, no DB.
 Every adapter speaks this language — Tripletex, SAP, Dynamics all map to/from these.
 
-Why DTOs?
   Without them, SyncService would need to know Tripletex JSON structure.
   With them, SyncService only knows ERPExpense/ERPInvoice — provider-agnostic.
 """

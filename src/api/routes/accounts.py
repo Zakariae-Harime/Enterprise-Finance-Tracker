@@ -90,7 +90,7 @@ async def get_account(
     consistency window), the projection row doesn't exist and we fall back.
     In production, this window is milliseconds.
     """
-    tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+    tenant_id = current_user.organization_id
 
     # ── FAST PATH: Read from projection table ─────────────────────────────
     async with db_pool.acquire() as conn:

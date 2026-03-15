@@ -1,10 +1,11 @@
 """
 Expense domain events.
 
-Three events cover the full lifecycle:
-  ExpenseSubmitted  → employee submits for approval
-  ExpenseApproved   → approver accepts
-  ExpenseRejected   → approver declines with reason
+Lifecycle:
+  ExpenseSubmitted          → employee submits for approval
+  ExpenseApprovalRequested  → system requests approval from a role
+  ExpenseApproved           → approver accepts (human or auto)
+  ExpenseRejected           → approver declines with reason
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -23,11 +24,19 @@ class ExpenseSubmitted(DomainEvent):
     merchant_name: str
     expense_date: str           # ISO date string 'YYYY-MM-DD'
     category: Optional[str] = None
+    organization_id: Optional[UUID] = None  # needed by approval_consumer to populate expenses table
+
+
+@dataclass(frozen=True)
+class ExpenseApprovalRequested(DomainEvent):
+    approver_id: Optional[UUID]   # None = role-based routing, not user-specific
+    due_date: str                  # ISO datetime string
+    approval_level: int = 1
 
 
 @dataclass(frozen=True)
 class ExpenseApproved(DomainEvent):
-    approved_by: UUID           # user_id of the approver
+    approved_by: UUID           # user_id of the approver (or system UUID for auto-approve)
 
 
 @dataclass(frozen=True)

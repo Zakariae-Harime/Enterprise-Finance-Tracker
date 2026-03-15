@@ -12,18 +12,23 @@
                          falls back to event replay (slow path / eventual consistency)
 """
 import calendar
+import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from uuid import UUID, uuid4
 from decimal import Decimal
 from datetime import datetime, timezone, date
+
+from asyncpg import UniqueViolationError
 
 from src.api.schemas.budget import (
     CreateBudgetRequest,
     BudgetCreatedResponse,
     BudgetResponse,
     BudgetStatus,
+    CreateApprovalRuleRequest,
+    ApprovalRuleResponse,
 )
-from src.auth.dependencies import get_current_user, UserContext
+from src.auth.dependencies import get_current_user, UserContext, require_role
 from src.api.dependencies import get_db_pool, get_event_store
 from src.domain.events_store import EventStore, AggregateNotFoundError
 from src.domain import EventMetadata, BudgetCreated, Currency, ExpenseCategory
@@ -91,6 +96,89 @@ async def create_budget(
         status="created",
         message=f"Budget '{request.budget_name}' created successfully",
     )
+
+
+# -- APPROVAL RULES ------------------------------------------------------------
+# ⚠ These MUST be registered BEFORE GET /{budget_id}.
+# FastAPI matches routes top-to-bottom; without this ordering the string
+# "approval-rules" would be parsed as a UUID parameter and return 422.
+
+@router.post(
+    "/approval-rules",
+    response_model=ApprovalRuleResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an approval rule",
+)
+async def create_approval_rule(
+    request: CreateApprovalRuleRequest,
+    current_user: UserContext = Depends(require_role("owner", "admin")),
+    db_pool=Depends(get_db_pool),
+) -> ApprovalRuleResponse:
+    """
+    Insert a new approval rule for this organisation.
+
+    Rules are evaluated in priority order (lowest number first) when an expense
+    is submitted. The first matching rule determines whether the expense is
+    auto-approved or routed to an approver role.
+    """
+    async with db_pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO approval_rules (
+                    organization_id, name, condition_type, condition_value,
+                    approver_role, auto_approve, priority
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id, name, condition_type, condition_value,
+                          approver_role, auto_approve, priority
+                """,
+                current_user.organization_id,
+                request.name,
+                request.condition_type.value,
+                json.dumps(request.condition_value),
+                request.approver_role,
+                request.auto_approve,
+                request.priority,
+            )
+        except UniqueViolationError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An approval rule with priority {request.priority} already exists.",
+            )
+    row_dict = dict(row)
+    if isinstance(row_dict.get("condition_value"), str):
+        row_dict["condition_value"] = json.loads(row_dict["condition_value"])
+    return ApprovalRuleResponse(**row_dict)
+
+
+@router.get(
+    "/approval-rules",
+    response_model=list[ApprovalRuleResponse],
+    summary="List approval rules for the organisation",
+)
+async def list_approval_rules(
+    current_user: UserContext = Depends(get_current_user),
+    db_pool=Depends(get_db_pool),
+) -> list[ApprovalRuleResponse]:
+    """Return all approval rules for this org, ordered by priority (lowest first)."""
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, name, condition_type, condition_value,
+                   approver_role, auto_approve, priority
+            FROM approval_rules
+            WHERE organization_id = $1
+            ORDER BY priority ASC
+            """,
+            current_user.organization_id,
+        )
+    result = []
+    for r in rows:
+        r_dict = dict(r)
+        if isinstance(r_dict.get("condition_value"), str):
+            r_dict["condition_value"] = json.loads(r_dict["condition_value"])
+        result.append(ApprovalRuleResponse(**r_dict))
+    return result
 
 
 # -- GET BY ID -----------------------------------------------------------------

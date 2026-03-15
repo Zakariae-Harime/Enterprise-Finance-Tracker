@@ -15,14 +15,23 @@ State machine:
   PENDING --[reject()]---> REJECTED
   APPROVED / REJECTED: terminal — no further transitions
 """
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 from typing import Optional
 
 from src.domain.events_store import EventStore
-from src.domain.expense_events import ExpenseSubmitted, ExpenseApproved, ExpenseRejected
+from src.domain.expense_events import (
+    ExpenseSubmitted,
+    ExpenseApprovalRequested,
+    ExpenseApproved,
+    ExpenseRejected,
+)
 from src.domain import EventMetadata
 from src.services.approval_rules import ApprovalRuleEngine
+
+# System actor UUID used when auto-approving via rules (no human approver)
+_SYSTEM_UUID = UUID("00000000-0000-0000-0000-000000000000")
 
 
 class ExpenseNotFoundError(Exception):
@@ -53,7 +62,14 @@ class ApprovalService:
         expense_date: str,
         category: Optional[str] = None,
     ) -> UUID:
-        """Submit a new expense. Returns the new expense_id."""
+        """
+        Submit a new expense. Returns the new expense_id.
+
+        After appending ExpenseSubmitted, queries approval_rules:
+          - auto_approve=True  → immediately appends ExpenseApproved (system actor)
+          - rule found         → appends ExpenseApprovalRequested (role-based routing)
+          - no rule            → stays pending, awaits manual approval
+        """
         expense_id = uuid4()
         event = ExpenseSubmitted(
             aggregate_id=expense_id,
@@ -65,6 +81,7 @@ class ApprovalService:
             merchant_name=merchant_name,
             expense_date=expense_date,
             category=category,
+            organization_id=organization_id,
         )
         await self._event_store.append_events(
             aggregate_id=expense_id,
@@ -73,6 +90,39 @@ class ApprovalService:
             expected_version=0,
             tenant_id=organization_id,
         )
+
+        # Check approval rules — auto-approve or route to approver role
+        rule = await self._find_matching_rule(organization_id, amount, category)
+        if rule is not None and rule["auto_approve"]:
+            auto_event = ExpenseApproved(
+                aggregate_id=expense_id,
+                metadata=EventMetadata(user_id=_SYSTEM_UUID),
+                approved_by=_SYSTEM_UUID,
+            )
+            await self._event_store.append_events(
+                aggregate_id=expense_id,
+                aggregate_type="Expense",
+                new_events=[auto_event],
+                expected_version=1,
+                tenant_id=organization_id,
+            )
+        elif rule is not None:
+            due = datetime.now(timezone.utc) + timedelta(days=7)
+            req_event = ExpenseApprovalRequested(
+                aggregate_id=expense_id,
+                metadata=EventMetadata(user_id=None),
+                approver_id=None,
+                due_date=due.isoformat(),
+                approval_level=1,
+            )
+            await self._event_store.append_events(
+                aggregate_id=expense_id,
+                aggregate_type="Expense",
+                new_events=[req_event],
+                expected_version=1,
+                tenant_id=organization_id,
+            )
+
         return expense_id
 
     # ── APPROVE ───────────────────────────────────────────────────────────────
@@ -93,6 +143,9 @@ class ApprovalService:
             can_approve_up_to=approver["can_approve_up_to"],
             expense_amount=expense["amount"],
         )
+        # Load current version to avoid hardcoding expected_version=1
+        events = await self._event_store.load_events(expense_id, "Expense", organization_id)
+        current_version = len(events)
         event = ExpenseApproved(
             aggregate_id=expense_id,
             metadata=EventMetadata(user_id=approver_id),
@@ -102,7 +155,7 @@ class ApprovalService:
             aggregate_id=expense_id,
             aggregate_type="Expense",
             new_events=[event],
-            expected_version=1,
+            expected_version=current_version,
             tenant_id=organization_id,
         )
 
@@ -125,6 +178,9 @@ class ApprovalService:
             can_approve_up_to=approver["can_approve_up_to"],
             expense_amount=expense["amount"],
         )
+        # Load current version to avoid hardcoding expected_version=1
+        events = await self._event_store.load_events(expense_id, "Expense", organization_id)
+        current_version = len(events)
         event = ExpenseRejected(
             aggregate_id=expense_id,
             metadata=EventMetadata(user_id=rejector_id),
@@ -135,11 +191,47 @@ class ApprovalService:
             aggregate_id=expense_id,
             aggregate_type="Expense",
             new_events=[event],
-            expected_version=1,
+            expected_version=current_version,
             tenant_id=organization_id,
         )
 
     # ── HELPERS ───────────────────────────────────────────────────────────────
+
+    async def _find_matching_rule(
+        self,
+        org_id: UUID,
+        amount: Decimal,
+        category: Optional[str],
+    ) -> Optional[dict]:
+        """
+        Query approval_rules ordered by priority (lowest first = highest priority).
+        Returns the first matching rule, or None if no rule applies.
+
+        Matching logic:
+          'amount_above' → amount > condition_value['threshold']
+          'category'     → category == condition_value['category']
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT condition_type, condition_value, approver_role, auto_approve
+                FROM approval_rules
+                WHERE organization_id = $1
+                ORDER BY priority ASC
+                """,
+                org_id,
+            )
+        for row in rows:
+            ct = row["condition_type"]
+            cv = row["condition_value"]
+            if isinstance(cv, str):
+                import json as _json
+                cv = _json.loads(cv)
+            if ct == "amount_above" and amount > Decimal(str(cv["threshold"])):
+                return dict(row)
+            if ct == "category" and category == cv.get("category"):
+                return dict(row)
+        return None
 
     async def _load_expense_and_approver(self, expense_id, approver_id, organization_id):
         async with self._pool.acquire() as conn:

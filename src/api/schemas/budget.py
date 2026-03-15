@@ -123,3 +123,46 @@ class BudgetResponse(BaseModel):
     start_date: date
     status: BudgetStatus              # active / threshold_reached / exceeded
     created_at: Optional[datetime] = None
+
+
+# ── Approval Rules ────────────────────────────────────────────────────────────
+
+class ConditionType(str, Enum):
+    AMOUNT_ABOVE = "amount_above"
+    CATEGORY = "category"
+    DEPARTMENT = "department"
+
+
+class CreateApprovalRuleRequest(BaseModel):
+    """
+    Request body for creating a new approval rule.
+
+    Example — require finance approval for expenses above 5000 NOK:
+    {
+        "name": "Large expense approval",
+        "condition_type": "amount_above",
+        "condition_value": {"threshold": "5000.00"},
+        "approver_role": "finance",
+        "auto_approve": false,
+        "priority": 10
+    }
+    """
+    name: str = Field(..., min_length=1, max_length=255)
+    condition_type: ConditionType
+    condition_value: dict           # {"threshold": "5000.00"} or {"category": "travel_expenses"}
+    approver_role: str = Field(..., pattern="^(owner|admin|finance|manager)$")
+    auto_approve: bool = False
+    priority: int = Field(..., ge=0, description="Lower number = higher priority (evaluated first)")
+
+
+class ApprovalRuleResponse(BaseModel):
+    """Response shape for a single approval rule."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    condition_type: str
+    condition_value: dict
+    approver_role: str
+    auto_approve: bool
+    priority: int

@@ -22,10 +22,21 @@ async def db_pool():
     Database connection pool shared across all tests.
     Created once, reused everywhere, closed at end.
     """
+    async def _init_conn(conn):
+        await conn.set_type_codec(
+            "jsonb", encoder=json.dumps, decoder=json.loads,
+            schema="pg_catalog", format="text",
+        )
+        await conn.set_type_codec(
+            "json", encoder=json.dumps, decoder=json.loads,
+            schema="pg_catalog", format="text",
+        )
+
     pool = await asyncpg.create_pool(
         TEST_DB_URL,
         min_size=2,
-        max_size=10
+        max_size=10,
+        init=_init_conn,
     )
     yield pool
     await pool.close()
