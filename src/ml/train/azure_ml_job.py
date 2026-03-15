@@ -6,7 +6,8 @@ YOUR LAPTOP DOES NOT DO THE TRAINING.
 You just send the job spec (~2KB) to Azure, then watch logs in browser.
 
 Cost: Standard_NC4as_T4_v3 (T4 GPU) = $0.52/hour × ~2 hours = ~$1.04
-      Well within your $10 budget. You can run this 9 times and still be under budget.
+      Well within your $100 Azure for Students budget.
+      You can run this ~96 times and still be under budget.
 
 SETUP REQUIRED (one time, ~10 minutes):
 ────────────────────────────────────────
@@ -75,7 +76,6 @@ from azure.ai.ml import Input, MLClient, command
 from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import (
     AmlCompute,           # GPU compute cluster definition
-    BuildContext,         # How to build the Docker environment
     Environment,          # Python/CUDA environment for training
 )
 from azure.identity import DefaultAzureCredential
@@ -90,8 +90,8 @@ RESOURCE_GROUP   = os.environ.get("AZURE_RESOURCE_GROUP", "finance-tracker-rg")
 WORKSPACE_NAME   = os.environ.get("AZURE_ML_WORKSPACE", "finance-tracker-ml")
 
 # GPU compute cluster settings
-COMPUTE_NAME     = "gpu-cluster-nc6"
-COMPUTE_SIZE     = "Standard_NC6"           # K80 GPU, 6 vCPUs, 56GB RAM, $0.90/hour
+COMPUTE_NAME     = "gpu-cluster-nc4t4"
+COMPUTE_SIZE     = "Standard_NC4as_T4_v3"   # T4 GPU, 4 vCPUs, 28GB RAM, $0.52/hour
 MIN_NODES        = 0    # Scale to 0 when idle → $0 cost when not training
 MAX_NODES        = 1    # Only need 1 node for our dataset size
 
@@ -142,10 +142,11 @@ def get_or_create_compute(client: MLClient) -> str:
     Cluster creation takes ~3 minutes (first time only).
     Subsequent calls reuse the existing cluster immediately.
 
-    T4 GPU specs:
+    T4 GPU specs (Standard_NC4as_T4_v3):
       - 16GB GDDR6 VRAM (plenty for BERT fine-tuning with batch_size=16)
-      - ~65 TFLOPS FP16 (much faster than V100 for small models)
-      - Turing architecture (2018) — mature, stable, well-supported
+      - ~65 TFLOPS FP16 (4× faster than K80 for transformer models)
+      - Turing architecture (2018) — mature, CUDA 11.8+ supported
+      - 4 vCPUs, 28GB RAM — sufficient for our 3,500-sample dataset
 
     Returns:
         Compute cluster name (same COMPUTE_NAME constant)
@@ -217,32 +218,14 @@ def get_or_create_environment(client: MLClient) -> str:
         version=env_version,
         description="NB-BERT fine-tuning environment for Norwegian transaction categorization",
 
-        # Base image: PyTorch 2.1 with CUDA 11.8 support (from Azure ML curated images)
-        # This is maintained by Microsoft — security patches, CUDA updates included.
+        # Base image: PyTorch 2.1 + CUDA 11.8, maintained by Microsoft.
+        # Contains: Python 3.11, PyTorch 2.1, CUDA 11.8 drivers, cuDNN 8.
+        # Our extra packages (transformers, scikit-learn, etc.) are added via pip_requirements.
         image="mcr.microsoft.com/azureml/curated/acpt-pytorch-2.1-cuda11.8:latest",
 
-        # Additional pip packages on top of the base image
-        # These are NOT in the base image — we install them on first container build.
-        conda_file={
-            "name": "finance-tracker-env",
-            "channels": ["conda-forge", "defaults"],
-            "dependencies": [
-                "python=3.11",
-                "pip",
-                {
-                    "pip": [
-                        "transformers>=4.36.0",
-                        "datasets>=2.16.0",
-                        "scikit-learn>=1.4.0",
-                        "pyarrow>=15.0.0",
-                        "onnx>=1.15.0",
-                        "onnxruntime>=1.17.0",
-                        "numpy>=1.24.0",
-                        "pandas>=2.1.0",
-                    ]
-                },
-            ],
-        },
+        # Pip requirements file — versioned alongside training code.
+        # Separating deps into a file means you can change packages without changing this script.
+        pip_requirements=str(Path(__file__).parent / "requirements-training.txt"),
     )
 
     client.environments.create_or_update(env)

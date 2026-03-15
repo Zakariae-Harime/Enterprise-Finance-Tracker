@@ -399,7 +399,7 @@ CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 
       -- Authentication (encrypted)
       auth_type VARCHAR(50),          -- 'oauth2', 'api_key', 'basic'
-      credentials_encrypted BYTEA,    -- Encrypted OAuth tokens or API keys
+      credentials_encrypted TEXT,      -- Encrypted OAuth tokens or API keys (Fernet base64)
 
       -- Status
       status VARCHAR(50) DEFAULT 'active',  -- 'active', 'paused', 'error', 'disconnected'

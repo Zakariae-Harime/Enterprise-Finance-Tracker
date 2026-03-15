@@ -40,7 +40,7 @@ async def connect_integration(
     """
     if request.provider not in ADAPTERS:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown provider '{request.provider}'. Supported: {list(ADAPTERS)}",
         )
 
@@ -50,9 +50,9 @@ async def connect_integration(
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO integrations (id, organization_id, provider, encrypted_credentials, status)
+            INSERT INTO integrations (id, organization_id, provider, credentials_encrypted, status)
             VALUES ($1, $2, $3, $4, 'active')
-            RETURNING id, provider, status, created_at, last_synced_at
+            RETURNING id, provider, status, created_at, last_sync_at
             """,
             integration_id,
             current_user.organization_id,
@@ -72,7 +72,7 @@ async def list_integrations(
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, provider, status, created_at, last_synced_at
+            SELECT id, provider, status, created_at, last_sync_at
             FROM integrations
             WHERE organization_id = $1 AND status != 'disconnected'
             ORDER BY created_at DESC
@@ -98,7 +98,7 @@ async def trigger_sync(
     if result.success:
         async with db_pool.acquire() as conn:
             await conn.execute(
-                "UPDATE integrations SET last_synced_at = NOW() WHERE id = $1",
+                "UPDATE integrations SET last_sync_at = NOW() WHERE id = $1",
                 integration_id,
             )
 
@@ -130,7 +130,7 @@ async def list_sync_jobs(
         rows = await conn.fetch(
             """
             SELECT id, integration_id, status, records_processed,
-                   error_details, started_at, finished_at
+                   error_log, started_at, completed_at
             FROM sync_jobs
             WHERE integration_id = $1
             ORDER BY started_at DESC

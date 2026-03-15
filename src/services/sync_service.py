@@ -1,4 +1,3 @@
-import json
 import uuid
 from datetime import date, timedelta
 from typing import Optional
@@ -40,7 +39,7 @@ class SyncService:
 
     async def _load_integration(self, conn, integration_id: UUID, org_id: UUID) -> Optional[dict]:
         row = await conn.fetchrow(
-            "SELECT id, provider, encrypted_credentials, last_synced_at "
+            "SELECT id, provider, credentials_encrypted, last_sync_at "
             "FROM integrations WHERE id = $1 AND organization_id = $2 AND status = 'active'",
             integration_id,
             org_id,
@@ -61,11 +60,11 @@ class SyncService:
 
     async def _do_sync(self, integration: dict) -> tuple[list, list[str]]:
         provider = integration["provider"]
-        credentials = decrypt_credentials(integration["encrypted_credentials"])
+        credentials = decrypt_credentials(integration["credentials_encrypted"])
 
         since_date = (
-            integration["last_synced_at"].date().isoformat()
-            if integration["last_synced_at"]
+            integration["last_sync_at"].date().isoformat()
+            if integration["last_sync_at"]
             else (date.today() - timedelta(days=30)).isoformat()
         )
 
@@ -88,17 +87,17 @@ class SyncService:
         status = "completed" if not errors else "completed_with_errors"
         await conn.execute(
             "UPDATE sync_jobs SET status = $1, records_processed = $2, "
-            "error_details = $3, finished_at = NOW() WHERE id = $4",
+            "error_log = $3, completed_at = NOW() WHERE id = $4",
             status,
             records,
-            json.dumps(errors) if errors else None,
+            errors if errors else None,
             job_id,
         )
 
     async def _fail_sync_job(self, conn, job_id: UUID, error: str):
         await conn.execute(
-            "UPDATE sync_jobs SET status = 'failed', error_details = $1, finished_at = NOW() "
+            "UPDATE sync_jobs SET status = 'failed', error_log = $1, completed_at = NOW() "
             "WHERE id = $2",
-            json.dumps([error]),
+            [error],
             job_id,
         )

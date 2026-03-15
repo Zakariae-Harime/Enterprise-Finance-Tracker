@@ -31,6 +31,7 @@ pandas>=2.1.0             # DataFrames for aggregations
 aiohttp>=3.9.0            # Async HTTP client — used by all 6 ERP adapters
 
 # === Utilities ===
+python-dotenv>=1.0.0      # Loads .env file into os.environ (used by azure_ml_job.py)
 python-jose[cryptography] # JWT tokens for auth
 passlib[bcrypt]           # Password hashing
 cryptography>=42.0.0      # Fernet symmetric encryption for ERP credentials

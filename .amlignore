@@ -1,0 +1,46 @@
+# Azure ML job upload exclusions
+# Without this file, Azure ML uploads the ENTIRE project root (~500MB+) on every job submission.
+# Listed paths are excluded — training still works because the script only needs src/ml/train/.
+
+# Model artifacts (large binary files — download separately via az ml job download)
+src/ml/models/
+data/
+
+# Test suite — not needed on the GPU VM
+tests/
+
+# Python cache and virtual envs
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Docker and local infra
+.docker/
+docker-compose*.yml
+
+# Editor and OS artifacts
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Local environment files (secrets — never upload these)
+.env
+*.env
+
+# Notebooks (large, not needed for training)
+notebooks/
+*.ipynb
+
+# CI/CD
+.github/
+
+# Azure ML plan files
+*.md

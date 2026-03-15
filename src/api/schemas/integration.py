@@ -16,7 +16,7 @@ class IntegrationResponse(BaseModel):
     provider: str
     status: str
     created_at: datetime
-    last_synced_at: Optional[datetime] = None
+    last_sync_at: Optional[datetime] = None
 
 
 class TriggerSyncResponse(BaseModel):
@@ -33,6 +33,6 @@ class SyncJobResponse(BaseModel):
     integration_id: UUID
     status: str
     records_processed: Optional[int] = None
-    error_details: Optional[str] = None
+    error_log: Optional[list] = None
     started_at: datetime
-    finished_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
