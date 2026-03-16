@@ -29,7 +29,7 @@ from src.api.schemas.budget import (
     ApprovalRuleResponse,
 )
 from src.auth.dependencies import get_current_user, UserContext, require_role
-from src.api.dependencies import get_db_pool, get_event_store
+from src.api.dependencies import get_db_pool, get_read_db_pool, get_event_store
 from src.domain.events_store import EventStore, AggregateNotFoundError
 from src.domain import EventMetadata, BudgetCreated, Currency, ExpenseCategory
 router = APIRouter(
@@ -158,7 +158,7 @@ async def create_approval_rule(
 )
 async def list_approval_rules(
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ) -> list[ApprovalRuleResponse]:
     """Return all approval rules for this org, ordered by priority (lowest first)."""
     async with db_pool.acquire() as conn:
@@ -192,7 +192,7 @@ async def get_budget(
     budget_id: UUID,
     current_user: UserContext = Depends(get_current_user),
     event_store: EventStore = Depends(get_event_store),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica (fast path budget_status query)
 ) -> BudgetResponse:
     """
     CQRS Query: fast path (budget_status table) with event replay fallback.
@@ -279,7 +279,7 @@ async def get_budget(
 )
 async def list_budgets(
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ) -> list[BudgetResponse]:
     """Query: all budgets for the current tenant from the projection table."""
     async with db_pool.acquire() as conn:

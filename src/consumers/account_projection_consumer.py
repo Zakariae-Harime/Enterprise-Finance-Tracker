@@ -22,6 +22,7 @@ from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from src.infrastructure.kafka_consumer import IdempotentConsumer
+from src.infrastructure.cache import CacheClient
 logger=logging.getLogger(__name__) #logger instead of print() for better logging practices  filter by level (DEBUG/INFO/WARNING/ERROR) and route output to files/monitoring without code changes.
 class AccountProjectionConsumer(IdempotentConsumer):
     """
@@ -39,11 +40,12 @@ class AccountProjectionConsumer(IdempotentConsumer):
         - As transactions grow (thousands per account), replay gets slow
         - This is what DNB does: your balance is a projection, not a live replay
       """
-    def __init__(self, db_pool : asyncpg.Pool):
+    def __init__(self, db_pool: asyncpg.Pool, cache: CacheClient | None = None):
           # "account_projection_service" is unique in the processed_events table.
           # Same event can be processed by BOTH this and email_consumer —
           # tracked independently via (event_id, consumer_name) composite PK.
         super().__init__(db_pool, consumer_name="account_projection_service")
+        self.cache = cache
     
     # process_event is the abstract method IdempotentConsumer calls after dedup check
     async def process_event(self, event_type: str, event_data: dict) -> None:
@@ -130,6 +132,11 @@ class AccountProjectionConsumer(IdempotentConsumer):
             )
             # updated_at is auto-set by DB trigger (init-db.sql line 228)
 
+        # Invalidate cached account so the next GET reflects the new balance.
+        # We don't know the org_id here, so use a wildcard pattern.
+        if self.cache:
+            await self.cache.delete_pattern(f"account:*:{account_id}")
+
         logger.info(
             "[account_projection_service] Account %s balance changed by %s (%s)",
             account_id, balance_delta, transaction_type,
@@ -170,6 +177,7 @@ async def start_account_projection_consumer(
     kafka_bootstrap_servers: str = "localhost:9092",
     dlq_topic: str = "domain_events_dlq",
     max_retries: int = 3,
+    cache: CacheClient | None = None,
 ) -> None:
     """
     Connect to Kafka and process messages forever.
@@ -180,7 +188,7 @@ async def start_account_projection_consumer(
 
     Same pattern as start_data_lake_consumer() in data_lake_consumer.py.
     """
-    consumer = AccountProjectionConsumer(db_pool=db_pool)
+    consumer = AccountProjectionConsumer(db_pool=db_pool, cache=cache)
 
     # AIOKafkaConsumer accepts multiple topic names as positional args
     kafka_consumer = AIOKafkaConsumer(

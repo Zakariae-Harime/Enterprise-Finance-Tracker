@@ -599,3 +599,11 @@ CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
     -- Deduplication index: "Has this event_id already failed?"
     CREATE UNIQUE INDEX idx_dlq_event_id_consumer
         ON dlq_messages (event_id, consumer_name);
+
+-- Covering index for transaction list query (DISTINCT ON hot path)
+CREATE INDEX idx_events_tenant_type_created
+    ON events (tenant_id, aggregate_type, created_at ASC)
+    WHERE aggregate_type IN ('Transaction', 'Account', 'Budget', 'Expense');
+
+-- Partial index for outbox relay worker to quickly find unpublished events
+CREATE INDEX idx_outbox_unpublished ON outbox (created_at ASC) WHERE published_at IS NULL;

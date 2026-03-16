@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 from src.auth.dependencies import get_current_user, require_role, UserContext
-from src.api.dependencies import get_db_pool
+from src.api.dependencies import get_db_pool, get_read_db_pool
 
 router = APIRouter(
     prefix="/organizations",
@@ -62,7 +62,7 @@ class InviteMemberResponse(BaseModel):
 )
 async def get_my_organization(
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ) -> OrganizationResponse:
     """
     Returns the organization the authenticated user belongs to,
@@ -103,7 +103,7 @@ async def get_my_organization(
 )
 async def list_members(
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ) -> list[MemberResponse]:
     """
     Returns all users in the current tenant's organization.

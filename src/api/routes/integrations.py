@@ -13,7 +13,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.api.dependencies import get_db_pool
+from src.api.dependencies import get_db_pool, get_read_db_pool
 from src.api.schemas.integration import (
     ConnectIntegrationRequest,
     IntegrationResponse,
@@ -66,7 +66,7 @@ async def connect_integration(
 @router.get("/", response_model=List[IntegrationResponse])
 async def list_integrations(
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ):
     """List all active ERP integrations for this organisation."""
     async with db_pool.acquire() as conn:
@@ -114,7 +114,7 @@ async def trigger_sync(
 async def list_sync_jobs(
     integration_id: uuid.UUID,
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ):
     """Return sync history for a given integration, newest first."""
     async with db_pool.acquire() as conn:

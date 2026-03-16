@@ -19,9 +19,10 @@ from datetime import datetime, timezone
 
 from src.auth.dependencies import get_current_user, UserContext
 from src.api.schemas.account import ( AccountCreatingRequest,   #Validates incoming JSON for POST /accounts
-AccountResponse, # Defines response shape after creation 
-AccountCreatedResponse)  #Defines response shape for GET /accounts/{id} /Fetching 
-from src.api.dependencies import get_db_pool, get_event_store #Function that creates EventStore with shared db pool from dependencies.py that reads request.app.state.db_pool and return EventStore(pool)
+AccountResponse, # Defines response shape after creation
+AccountCreatedResponse)  #Defines response shape for GET /accounts/{id} /Fetching
+from src.api.dependencies import get_db_pool, get_read_db_pool, get_event_store, get_cache
+from src.infrastructure.cache import CacheClient
 from src.domain.events_store import EventStore,AggregateNotFoundError
 from src.domain import EventMetadata, AccountCreated
 
@@ -77,7 +78,8 @@ async def get_account(
     account_id: UUID,
     event_store: EventStore = Depends(get_event_store),
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),              # NEW: direct pool for projection query
+    db_pool=Depends(get_read_db_pool),  # GET → replica (account_projections lookup)
+    cache: CacheClient = Depends(get_cache),
 ) -> AccountResponse:
     """
     CQRS Query: tries the fast read model first, falls back to event replay.
@@ -91,6 +93,12 @@ async def get_account(
     In production, this window is milliseconds.
     """
     tenant_id = current_user.organization_id
+
+    # ── CACHE PATH: Redis (L1) ─────────────────────────────────────────────
+    cache_key = f"account:{tenant_id}:{account_id}"
+    cached = await cache.get(cache_key)
+    if cached:
+        return AccountResponse(**cached)
 
     # ── FAST PATH: Read from projection table ─────────────────────────────
     async with db_pool.acquire() as conn:
@@ -106,7 +114,7 @@ async def get_account(
 
     if projection:
         # Projection exists — return instantly without touching the event store
-        return AccountResponse(
+        response = AccountResponse(
             account_id=projection["account_id"],
             name=projection["bank_name"] or "Unknown",
             currency=projection["currency"] or "NOK",
@@ -115,6 +123,8 @@ async def get_account(
             version=projection["last_event_version"] or 0,
             created_at=projection["created_at"],
         )
+        await cache.set(cache_key, response.model_dump(), ttl_seconds=300)
+        return response
 
     # ── SLOW PATH: Projection not ready yet — replay events ───────────────
     # This runs when: consumer hasn't processed the event yet, or
@@ -130,7 +140,7 @@ async def get_account(
 
     first_event = events[0]
     event_data = first_event["event_data"]
-    return AccountResponse(
+    response = AccountResponse(
         account_id=event_data.get("aggregate_id", str(account_id)),
         name=event_data.get("account_name", "Unknown"),
         currency=event_data.get("currency", "NOK"),
@@ -139,3 +149,5 @@ async def get_account(
         version=len(events),
         created_at=first_event["created_at"],
     )
+    await cache.set(cache_key, response.model_dump(), ttl_seconds=300)
+    return response

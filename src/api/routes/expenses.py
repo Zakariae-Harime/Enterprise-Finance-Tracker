@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from src.auth.dependencies import get_current_user, UserContext
-from src.api.dependencies import get_db_pool, get_event_store
+from src.api.dependencies import get_db_pool, get_read_db_pool, get_event_store
 from src.domain.events_store import EventStore, AggregateNotFoundError
 from src.services.approval_service import (
     ApprovalService,
@@ -125,7 +125,7 @@ async def submit_expense(
 async def get_expense(
     expense_id: UUID,
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
     event_store: EventStore = Depends(get_event_store),
 ) -> ExpenseDetailResponse:
     """
@@ -175,7 +175,7 @@ async def get_expense(
 @router.get("/", response_model=list[ExpenseListItem])
 async def list_expenses(
     current_user: UserContext = Depends(get_current_user),
-    db_pool=Depends(get_db_pool),
+    db_pool=Depends(get_read_db_pool),  # GET → replica
 ) -> list[ExpenseListItem]:
     """Employees see only their own. Finance/Admin/Owner see all org expenses."""
     async with db_pool.acquire() as conn:
