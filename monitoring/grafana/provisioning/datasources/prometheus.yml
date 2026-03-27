@@ -1,0 +1,69 @@
+# monitoring/grafana/provisioning/datasources/prometheus.yml
+#
+# WHAT IS THIS FILE?
+# -------------------
+# Grafana supports "provisioning" — auto-configuring datasources and dashboards
+# from YAML files at startup, instead of clicking through the UI every time.
+#
+# Without provisioning:
+#   - You start Grafana → open browser → Settings → Datasources → Add Prometheus →
+#     fill in URL → click Save. Done manually every time you recreate the container.
+#
+# With provisioning:
+#   - Grafana reads this file at startup → datasource is ready immediately.
+#   - No human clicks needed. docker-compose up → everything works.
+#   - Great for dev/CI: fresh environment, zero configuration required.
+#
+# USER STORY
+# -----------
+# "As a developer, I want to run `docker-compose up` and immediately have a
+#  working Grafana dashboard, without any manual setup steps."
+
+apiVersion: 1   # Grafana provisioning schema version. Always 1.
+
+datasources:
+  - name: "Prometheus"
+    # type: the Grafana plugin type. "prometheus" is built-in (no install needed).
+    # Other built-in types: mysql, postgres, elasticsearch, loki, jaeger.
+    type: "prometheus"
+
+    # access: how Grafana connects to the datasource.
+    # "proxy" = Grafana server → Prometheus (backend call, not from your browser).
+    # This is correct for Docker networks — Grafana container talks to Prometheus container.
+    # "direct" = your browser → Prometheus (breaks in Docker because browser can't reach
+    #             the Prometheus container directly by service name).
+    access: "proxy"
+
+    # url: the Prometheus server URL as seen from the Grafana container.
+    # "prometheus" is the Docker Compose service name — Docker's DNS resolves it
+    # to the Prometheus container's IP address on the shared Docker network.
+    # Port 9090 is Prometheus's default HTTP port.
+    url: "http://prometheus:9090"
+
+    # isDefault: make this the default datasource for all dashboards.
+    # When you create a new panel, it pre-selects this datasource automatically.
+    isDefault: true
+
+    # editable: allow users to edit this datasource through the Grafana UI.
+    # false = read-only from UI (changes only via this file — good for reproducibility).
+    # true = engineers can tweak settings in the UI (useful during development).
+    editable: true
+
+    # jsonData: Prometheus-specific settings.
+    jsonData:
+      # httpMethod: use POST for metric queries (handles long PromQL expressions).
+      # GET has URL length limits (~4KB). POST has no practical limit.
+      httpMethod: "POST"
+
+      # timeInterval: the minimum scrape interval. Must match prometheus.yml global.scrape_interval.
+      # Grafana uses this to prevent queries with step < scrape interval
+      # (which would just return empty data for the missing intervals).
+      timeInterval: "15s"
+
+      # exemplarTraceIdDestinations: link Prometheus exemplars to Jaeger/Tempo traces.
+      # Exemplars are per-sample trace IDs attached to histogram metrics.
+      # This allows "click on a slow P99 data point → jump to the trace" in Grafana.
+      # Requires distributed tracing (Jaeger/Tempo) — commented out for now.
+      # exemplarTraceIdDestinations:
+      #   - name: "trace_id"
+      #     datasourceUid: "jaeger"

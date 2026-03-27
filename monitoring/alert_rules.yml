@@ -1,0 +1,250 @@
+# monitoring/alert_rules.yml
+# This file defines alerting rules for Prometheus.
+# Alert rules are PromQL expressions that Prometheus evaluates every 15 seconds.
+# If an expression is TRUE for longer than the `for` duration, Prometheus fires
+# the alert — it POSTs to Alertmanager, which then routes to Slack/PagerDuty.
+#
+# HOW TO READ A RULE
+# -------------------
+# alert: "Name"         ← label on the notification
+# expr: <PromQL>        ← evaluated query. Must return a non-empty result to fire.
+# for: 5m               ← must be TRUE for 5 consecutive minutes (avoids flapping)
+# labels:               ← attached to the alert (used for routing in Alertmanager)
+# annotations:          ← human-readable message in the Slack notification
+#
+# THE TWO ALERT STATES
+# ---------------------
+# PENDING: expr is TRUE but `for` window hasn't elapsed yet. Not yet sent to Alertmanager.
+# FIRING:  expr was TRUE for >= `for` duration. Alertmanager receives and routes it.
+# RESOLVED: expr returned to FALSE. Alertmanager sends a "resolved" notification.
+#
+# WHAT IS PromQL?
+# ----------------
+# Prometheus Query Language. Works on time series.
+# Example: http_requests_total{status_code="500"}
+# Means: "give me the time series named http_requests_total where status_code label = 500"
+#
+# rate(metric[5m]) = per-second rate of change over last 5 minutes.
+# histogram_quantile(0.99, ...) = 99th percentile (P99).
+# sum(...) = aggregate across all label combinations.
+#
+# USER STORY
+# -----------
+# "As an on-call engineer, I want to receive a Slack message the moment the Finance
+#  Tracker error rate exceeds 1%, so I can investigate before users start complaining."
+
+groups:
+  # ── Group 1: API Health ────────────────────────────────────────────────────
+  # Rules about HTTP error rates and latency.
+  # Grouped together so they share an evaluation interval.
+  - name: "api_health"
+    # interval: override evaluation cadence for just this group.
+    # Default inherits global.evaluation_interval (15s).
+    # 15s is fine for production — faster is possible but wastes CPU.
+    interval: 15s
+
+    rules:
+      # ── Alert: High Error Rate ─────────────────────────────────────────────
+      - alert: "HighErrorRate"
+        expr: |
+          # NUMERATOR: rate of 5xx responses per second, summed across all endpoints.
+          # rate() takes a counter and computes per-second increase over the window.
+          # [5m] = look at the last 5 minutes of data points (Prometheus keeps them in memory).
+          # sum() aggregates across all {method, endpoint} label combinations.
+          # We keep the {job} label with by(job) so the alert tells us WHICH service.
+          (
+            sum by(job) (
+              rate(http_requests_total{status_code=~"5.."}[5m])
+            )
+          )
+          /
+          # DENOMINATOR: rate of ALL requests per second.
+          # The ratio = error fraction. Multiply by 100 for percentage.
+          (
+            sum by(job) (
+              rate(http_requests_total[5m])
+            )
+          )
+          # > 0.01 = more than 1% of requests are 5xx errors.
+          # In production you might lower this to 0.005 (0.5%) for a tighter SLO.
+          * 100 > 1
+
+        # for: the expr must be TRUE for 5 continuous minutes before firing.
+        # Why not fire immediately?
+        # One bad scrape, one transient error, one slow DB query → expr briefly true.
+        # `for: 5m` means "this is a SUSTAINED problem, not a blip."
+        for: 5m
+
+        labels:
+          # severity routes the alert in Alertmanager.
+          # critical → PagerDuty (wakes on-call at 3am)
+          # warning  → Slack only (check in the morning)
+          severity: "critical"
+          team: "backend"
+
+        annotations:
+          # summary: shown in the Slack/PagerDuty notification title.
+          # {{ $labels.job }} inserts the job label value at fire time.
+          summary: "High error rate on {{ $labels.job }}"
+          # description: full context for the engineer who receives the alert.
+          # {{ $value }} is the actual numeric value (e.g., "3.2 %").
+          # printf "%.2f" formats to 2 decimal places.
+          description: >
+            Error rate is {{ printf "%.2f" $value }}% (threshold: 1%).
+            Check logs: docker logs finance_tracker_api_1 | grep ERROR
+          # runbook_url: link to the documented fix procedure.
+          # Engineers follow this at 3am without needing to think.
+          runbook_url: "https://wiki.internal/runbooks/high-error-rate"
+
+      # ── Alert: High P99 Latency ────────────────────────────────────────────
+      - alert: "HighP99Latency"
+        expr: |
+          # histogram_quantile computes percentiles from a histogram metric.
+          # 0.99 = 99th percentile (1 in 100 requests is slower than this value).
+          # http_request_duration_seconds_bucket is the histogram's bucket metric.
+          # _bucket suffix is auto-generated by prometheus_client for Histogram metrics.
+          # rate([5m]) smooths the counts over the last 5 minutes.
+          # sum by(job, endpoint) keeps the breakdown by endpoint so you can see
+          # WHICH endpoint is slow (/transactions/ vs /accounts/ etc.)
+          histogram_quantile(
+            0.99,
+            sum by(job, endpoint, le) (
+              rate(http_request_duration_seconds_bucket[5m])
+            )
+          )
+          # > 0.5 = P99 latency exceeds 500ms.
+          # Our SLO: 99% of requests complete in under 500ms.
+          # If this fires: check DB query plans, Redis cache hit rate, replica lag.
+          > 0.5
+
+        # for: 2 minutes. Latency spikes can be momentary (GC pause, DB hiccup).
+        # We want 2 sustained minutes to confirm it's a real problem, not a blip.
+        for: 2m
+
+        labels:
+          severity: "warning"   # warning, not critical: latency is bad but not down
+          team: "backend"
+
+        annotations:
+          summary: "P99 latency high on {{ $labels.endpoint }}"
+          description: >
+            P99 latency is {{ printf "%.3f" $value }}s
+            on endpoint {{ $labels.endpoint }} (threshold: 500ms).
+            Check: EXPLAIN ANALYZE slow queries, Redis cache hit rate.
+
+      # ── Alert: Service Down ────────────────────────────────────────────────
+      - alert: "APIServiceDown"
+        expr: |
+          # up is a synthetic metric Prometheus creates for each scrape target.
+          # up=1 means the last scrape succeeded (target responded with 200).
+          # up=0 means the last scrape failed (connection refused, timeout, non-200).
+          # If up == 0, the API container is down or unreachable.
+          up{job="finance_tracker_api"} == 0
+
+        # for: 1 minute. One failed scrape might be a transient network blip.
+        # Two consecutive failures (15s × 4 = 60s) = the service is really down.
+        for: 1m
+
+        labels:
+          severity: "critical"
+          team: "backend"
+
+        annotations:
+          summary: "Finance Tracker API is DOWN"
+          description: >
+            Prometheus cannot reach the API at api:8000/metrics.
+            Container may be crashed. Run: docker ps | grep api
+          runbook_url: "https://wiki.internal/runbooks/service-down"
+
+      # ── Alert: Zero Traffic (Dead Man's Switch) ──────────────────────────
+      - alert: "NoTrafficReceived"
+        expr: |
+          # If the rate of ALL requests drops to 0 for 10 minutes, something is wrong.
+          # Could be: rate limiter blocking everything, load balancer misconfiguration,
+          # or a deploy that made the service unreachable.
+          #
+          # absent() returns 1 if the metric doesn't exist at all (no data).
+          # The OR clause catches both "metric exists but is 0" AND "metric doesn't exist".
+          sum(rate(http_requests_total[5m])) == 0
+          or
+          absent(http_requests_total)
+
+        for: 10m
+
+        labels:
+          severity: "warning"
+          team: "backend"
+
+        annotations:
+          summary: "No traffic received for 10 minutes"
+          description: >
+            The API has received zero requests in the last 10 minutes.
+            Possible causes: routing misconfiguration, load balancer issue,
+            or all traffic being rate-limited (check Redis).
+
+  # ── Group 2: SLO Burn Rate ────────────────────────────────────────────────
+  # More advanced alerting: burn rate tells you HOW FAST you're consuming your
+  # error budget. SLO = 99.9% uptime = 8.7 hours/year allowed downtime.
+  #
+  # If error rate = 0.1% → burn rate = 1x → you'll exhaust budget in exactly 1 year.
+  # If error rate = 1%   → burn rate = 10x → you'll exhaust budget in 36 days.
+  # If error rate = 10%  → burn rate = 100x → budget gone in 3.6 days.
+  #
+  # Fast burn = page immediately. Slow burn = Slack notification.
+  - name: "slo_burn_rate"
+    rules:
+      - alert: "ErrorBudgetFastBurn"
+        expr: |
+          # 1-hour error rate ÷ SLO threshold (0.001 = 99.9% SLO)
+          # If this ratio > 14.4, you're burning at 14.4x = budget gone in 25 days.
+          # "14.4x" is the Google SRE recommended threshold for a 1-hour window.
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total[1h]))
+          )
+          /
+          0.001     # 0.001 = 99.9% SLO (1 - 0.999)
+          > 14.4    # 14.4x burn rate = budget consumed in ~25 days
+
+        for: 2m    # must sustain for 2 minutes to rule out spikes
+
+        labels:
+          severity: "critical"
+          team: "backend"
+
+        annotations:
+          summary: "Error budget fast burn — SLO at risk"
+          description: >
+            Burning error budget at {{ printf "%.1f" $value }}x normal rate.
+            At this rate, the 99.9% SLO error budget will be exhausted prematurely.
+            Immediate action required.
+
+  # ── Group 3: Infrastructure ────────────────────────────────────────────────
+  - name: "infrastructure"
+    rules:
+      # ── Alert: High Rate Limiting (too many 429s) ─────────────────────────
+      - alert: "HighRateLimitRejections"
+        expr: |
+          # If more than 5% of requests are being rate-limited (429), something is wrong.
+          # Normal: occasional 429 from automated scripts.
+          # Alarming: sustained 5% = legitimate users being blocked,
+          #           or a DDoS getting through the first layer of defense.
+          (
+            sum(rate(http_requests_total{status_code="429"}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) * 100 > 5
+
+        for: 3m
+
+        labels:
+          severity: "warning"
+          team: "backend"
+
+        annotations:
+          summary: "High rate of 429 responses ({{ printf \"%.1f\" $value }}%)"
+          description: >
+            More than 5% of requests are being rate-limited.
+            Could indicate a DDoS, scraper, or a bug in the client.
+            Check Redis rate limit keys: redis-cli keys "ratelimit:*"

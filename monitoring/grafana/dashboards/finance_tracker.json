@@ -1,0 +1,425 @@
+{
+  "__comment": "Finance Tracker — RED Method Dashboard (Rate, Errors, Duration)",
+  "__explanation": {
+    "what_is_this": "A Grafana dashboard definition in JSON. Grafana reads this file and renders panels with live data from Prometheus. Each panel is a PromQL query that fetches metric data and visualizes it.",
+    "red_method": {
+      "Rate": "How many requests per second is the API handling right now?",
+      "Errors": "What percentage of those requests are failing (5xx)?",
+      "Duration": "How long are requests taking? (P50, P95, P99 latencies)"
+    },
+    "user_story": "As an on-call engineer, I open this dashboard and within 10 seconds I know: is the system healthy? If not, is it slow or erroring? Which endpoint is the problem?"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Finance Tracker API — Request Rate, Error Rate, and Latency (RED Method)",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "R — Rate (Requests per Second)",
+      "type": "row",
+      "__explanation": "Section header — groups the rate panels together visually."
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Total HTTP requests per second across all endpoints and status codes.\nHigher is more traffic. Sudden drop to 0 means service is down.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "reqps",
+          "__unit_explanation": "reqps = requests per second. Grafana automatically formats the Y-axis."
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["mean", "max", "last"], "displayMode": "table", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total[5m])) by (method, endpoint)",
+          "__expr_explanation": {
+            "rate(http_requests_total[5m])": "Per-second rate of the counter over the last 5 minutes. rate() handles counter resets (process restarts).",
+            "sum(...) by (method, endpoint)": "Group by method (GET/POST) and endpoint path. One line per unique combination.",
+            "result": "A time series line for each endpoint. You can see which endpoints get the most traffic."
+          },
+          "legendFormat": "{{ method }} {{ endpoint }}",
+          "__legendFormat_explanation": "Label template — each line in the legend shows the method and endpoint name.",
+          "refId": "A"
+        }
+      ],
+      "title": "Request Rate by Endpoint",
+      "type": "timeseries",
+      "__type_explanation": "timeseries = line chart with time on X-axis, values on Y-axis."
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Overall requests per second — one single number showing current traffic volume.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 100 }
+            ],
+            "__thresholds_explanation": "Green below 50 req/s, yellow 50-100, red above 100. Thresholds depend on your infrastructure capacity."
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 1 },
+      "id": 2,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "__reduceOptions_explanation": "Show the MOST RECENT non-null value — the current state, not a summary."
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total[5m]))",
+          "legendFormat": "Total req/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Current Request Rate",
+      "type": "stat",
+      "__type_explanation": "stat = single large number with color coding. Good for 'what is the value RIGHT NOW?'"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Breakdown of responses by HTTP status code family.\n2xx = success, 4xx = client errors (bad request, auth), 5xx = server errors (bugs, crashes).",
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 1 },
+      "id": 3,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right" }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=~\"2..\"}[5m]))",
+          "__expr_explanation": "status_code=~\"2..\" is a regex match. ~= means regex. 2.. matches 200, 201, 204, etc.",
+          "legendFormat": "2xx (success)",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=~\"4..\"}[5m]))",
+          "legendFormat": "4xx (client error)",
+          "refId": "B"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=~\"5..\"}[5m]))",
+          "legendFormat": "5xx (server error)",
+          "refId": "C"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=\"429\"}[5m]))",
+          "legendFormat": "429 (rate limited)",
+          "refId": "D"
+        }
+      ],
+      "title": "Requests by Status Code",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 101,
+      "title": "E — Errors (Error Rate %)",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Percentage of requests returning 5xx errors over the last 5 minutes.\nSLO: keep below 0.1% (99.9% success rate).\nAlert fires at 1%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 1.0 }
+            ]
+          },
+          "unit": "percent",
+          "max": 10,
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
+      "id": 4,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+          "__expr_explanation": "Fraction of 5xx responses × 100 to get a percentage. If 5 out of 100 requests fail, this = 5.",
+          "legendFormat": "Error Rate %",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate (5xx %)",
+      "type": "gauge",
+      "__type_explanation": "gauge = speedometer-style panel. The needle shows the current value. Thresholds color the arcs."
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Error rate trend over time. Useful for seeing if errors are getting better or worse.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Error Rate %" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 10 },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+          "legendFormat": "Error Rate %",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100 > bool 1",
+          "__expr_explanation": "> bool 1 returns 1 when above threshold, 0 otherwise. Combined with threshold coloring, this shows the SLO breach line.",
+          "legendFormat": "SLO Breach (>1%)",
+          "refId": "B"
+        }
+      ],
+      "title": "Error Rate Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 102,
+      "title": "D — Duration (Latency Percentiles)",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "P50, P95, P99 latency across ALL endpoints.\nP50 = median (half of requests are faster).\nP95 = 95th percentile (1 in 20 requests is slower).\nP99 = 99th percentile (1 in 100 requests is slower) — most important for SLOs.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "__unit_explanation": "Seconds. Grafana auto-formats: 0.047s displays as 47ms."
+        }
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 19 },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "__expr_explanation": {
+            "histogram_quantile(0.50, ...)": "Compute the 50th percentile from the histogram buckets.",
+            "_bucket suffix": "Auto-generated by prometheus_client for Histogram objects. Each bucket is a counter of requests that completed in <= that time.",
+            "sum(...) by (le)": "le = 'less than or equal'. The bucket label. Must keep le for histogram_quantile to work."
+          },
+          "legendFormat": "P50 (median)",
+          "refId": "A"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95",
+          "refId": "B"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99 (SLO: <500ms)",
+          "refId": "C"
+        }
+      ],
+      "title": "Latency Percentiles (All Endpoints)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "P99 latency right now — the single most important number for SLO compliance.\nGreen = under 500ms (SLO met). Red = over 500ms (SLO breached).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.25 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+      "id": 7,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P99 Latency",
+          "refId": "A"
+        }
+      ],
+      "title": "P99 Latency (Current)",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "P99 latency broken down by endpoint. Shows which specific route is slow.\nExample: /transactions/ is slow (event replay) but /accounts/ is fast (projection table + cache).",
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 27 },
+      "id": 8,
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "__expr_explanation": "Same P99 calculation but keeping the 'endpoint' label. Result: one line per endpoint. Tells you WHERE the slowness is.",
+          "legendFormat": "{{ endpoint }}",
+          "refId": "A"
+        }
+      ],
+      "title": "P99 Latency by Endpoint",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "id": 103,
+      "title": "Infrastructure — Rate Limiting & Cache",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Rate of 429 responses per second. High = users being throttled.\nCould indicate: DDoS, buggy client, or rate limit set too low.",
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "id": 9,
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=\"429\"}[5m]))",
+          "legendFormat": "Rate-limited requests/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Rate Limiting — 429s per Second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Percentage of requests that get 429 rate-limited.\nAbove 5% = alert fires. Normal = near 0%.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "id": 10,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(http_requests_total{status_code=\"429\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+          "legendFormat": "Rate Limit %",
+          "refId": "A"
+        }
+      ],
+      "title": "Rate Limit Rejection Rate %",
+      "type": "stat"
+    }
+  ],
+  "refresh": "10s",
+  "__refresh_explanation": "Dashboard auto-refreshes every 10 seconds — live view during incidents.",
+  "schemaVersion": 38,
+  "tags": ["finance-tracker", "api", "red-method"],
+  "templating": {
+    "list": [
+      {
+        "current": { "text": "5m", "value": "5m" },
+        "hide": 0,
+        "includeAll": false,
+        "name": "interval",
+        "options": [
+          { "text": "1m", "value": "1m" },
+          { "text": "5m", "value": "5m" },
+          { "text": "15m", "value": "15m" },
+          { "text": "1h", "value": "1h" }
+        ],
+        "query": "1m,5m,15m,1h",
+        "type": "custom",
+        "__type_explanation": "A dropdown variable. Change to 1m for fine-grained view during incident, 1h for trend analysis."
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "__time_explanation": "Default time range: last 1 hour. Change to 'Last 24 hours' for post-incident review.",
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Finance Tracker — RED Method Dashboard",
+  "uid": "finance-tracker-red",
+  "__uid_explanation": "Stable UID — Grafana uses this to de-duplicate dashboards. Same UID = update existing, not create duplicate.",
+  "version": 1
+}

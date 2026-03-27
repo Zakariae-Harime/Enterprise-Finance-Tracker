@@ -91,7 +91,12 @@
         - azurite_data:/data
       command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --location /data"
       healthcheck:
-        test: ["CMD", "nc", "-z", "localhost", "10000"]
+        # azurite runs on Node.js — `nc` is not installed in the image.
+        # Use `node` (always present) to attempt an HTTP connection on port 10000.
+        # azurite responds with 400 (unauthenticated) when running — that's fine,
+        # statusCode < 500 means the service is UP and accepting connections.
+        test: ["CMD", "node", "-e",
+          "require('http').get('http://127.0.0.1:10000', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
         interval: 10s
         timeout: 5s
         retries: 5
@@ -173,7 +178,117 @@
         - ./plugins:/opt/airflow/plugins
       command: scheduler
 
+    # === Prometheus (Metrics Collection) ===
+    # Prometheus scrapes GET /metrics from the API every 15s and stores the
+    # time-series data locally. Grafana and Alertmanager both query Prometheus.
+    #
+    # Port 9090: Prometheus web UI (http://localhost:9090)
+    # Use the UI to run ad-hoc PromQL queries, check scrape targets, and see alert states.
+    prometheus:
+      image: prom/prometheus:v2.50.1
+      # v2.50.1 is stable LTS. Pinning avoids "latest" breaking changes.
+      ports:
+        - "9090:9090"    # Prometheus web UI and HTTP API
+      volumes:
+        # Mount the prometheus config file INTO the container.
+        # Container reads /etc/prometheus/prometheus.yml at startup.
+        # ro = read-only: container can read but not modify the file.
+        - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+        # Mount the alert rules file.
+        - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+        # Named volume for Prometheus's time-series database (TSDB).
+        # Without this volume, all metric history is lost when the container restarts.
+        # prometheus_data is defined in the volumes section below.
+        - prometheus_data:/prometheus
+      command:
+        # Prometheus flags:
+        - "--config.file=/etc/prometheus/prometheus.yml"   # path to config
+        - "--storage.tsdb.path=/prometheus"                # where to store TSDB data
+        - "--storage.tsdb.retention.time=15d"              # keep 15 days of history
+        # --web.enable-lifecycle allows POST /-/reload to hot-reload config.
+        # Instead of docker-compose restart prometheus, you can: curl -X POST http://localhost:9090/-/reload
+        - "--web.enable-lifecycle"
+        # --web.enable-admin-api enables the admin API (delete series, snapshots).
+        # Useful for development/debugging. Disable in production.
+        - "--web.enable-admin-api"
+      # No depends_on for api — Prometheus starts independently.
+      # If the api is down, Prometheus marks it as DOWN in the Targets page
+      # and retries every scrape_interval. Once the api comes up, scraping resumes.
+      # This is the correct behavior: monitoring should work even when the app is broken.
+      restart: unless-stopped
+
+    # === Alertmanager (Alert Routing) ===
+    # Receives firing alerts from Prometheus and routes them to Slack/PagerDuty.
+    # Port 9093: Alertmanager web UI (http://localhost:9093)
+    # UI shows: active alerts, silences you've created, alert history.
+    alertmanager:
+      image: prom/alertmanager:v0.27.0
+      ports:
+        - "9093:9093"    # Alertmanager UI and API
+      volumes:
+        # Mount the alertmanager config file (routing rules, receivers, silences).
+        - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+        # Named volume for Alertmanager's state (silences, notification log).
+        # Without this: all silences are lost on restart (annoying during maintenance).
+        - alertmanager_data:/alertmanager
+      command:
+        - "--config.file=/etc/alertmanager/alertmanager.yml"
+        - "--storage.path=/alertmanager"
+        # --web.external-url: the public URL of Alertmanager.
+        # Used in notification links (click to view alert in Alertmanager UI).
+        - "--web.external-url=http://localhost:9093"
+      restart: unless-stopped
+
+    # === Grafana (Visualization) ===
+    # Reads from Prometheus and renders dashboards.
+    # Port 3001: Grafana web UI (http://localhost:3001)
+    # Default login: admin / admin (change on first login)
+    # We use 3001 instead of 3000 to avoid conflict with the React frontend (port 3000).
+    grafana:
+      image: grafana/grafana:10.3.3
+      # v10.3.3: stable version with support for histogram_quantile and exemplars.
+      ports:
+        - "3001:3000"    # host:container — Grafana listens on 3000 inside the container
+      environment:
+        # GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD:
+        # Set the initial admin credentials.
+        # In production: use GF_SECURITY_SECRET_KEY and store these in a secret manager.
+        - GF_SECURITY_ADMIN_USER=admin
+        - GF_SECURITY_ADMIN_PASSWORD=admin
+        # GF_USERS_ALLOW_SIGN_UP: false = only admins can create accounts.
+        # In an enterprise setup: connect Grafana to LDAP/OAuth instead.
+        - GF_USERS_ALLOW_SIGN_UP=false
+        # GF_INSTALL_PLUGINS: install Grafana plugins at startup.
+        # grafana-piechart-panel: pie chart panel type (not in Grafana core).
+        - GF_INSTALL_PLUGINS=grafana-piechart-panel
+        # GF_PATHS_PROVISIONING: where Grafana looks for provisioning YAML files.
+        # Our datasource and dashboard provider configs live here.
+        - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      volumes:
+        # Named volume for Grafana's database (sqlite3 by default).
+        # Stores: users, preferences, dashboard edits, annotations.
+        - grafana_data:/var/lib/grafana
+        # Mount provisioning config (datasources + dashboard providers).
+        # Grafana reads these at startup to auto-configure Prometheus and dashboards.
+        - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+        # Mount dashboard JSON files.
+        # Grafana loads these as pre-built dashboards.
+        - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      depends_on:
+        - prometheus    # Grafana needs Prometheus to be running to query data
+      restart: unless-stopped
+
   volumes:
     postgres_data:
     airflow_db_data:
     azurite_data:
+    # prometheus_data: stores Prometheus's TSDB (time-series database files).
+    # Prometheus uses its own custom binary format (not PostgreSQL or SQLite).
+    # Retains 15 days of metric data by default (controlled by --storage.tsdb.retention.time).
+    prometheus_data:
+    # alertmanager_data: stores silences and notification log (sqlite3).
+    # Without this: silences reset every container restart.
+    alertmanager_data:
+    # grafana_data: stores Grafana's sqlite3 database.
+    # Contains: user accounts, dashboard edits, saved queries, annotation history.
+    grafana_data:

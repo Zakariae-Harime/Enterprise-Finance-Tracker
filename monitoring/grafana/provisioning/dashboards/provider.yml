@@ -1,0 +1,50 @@
+# monitoring/grafana/provisioning/dashboards/provider.yml
+#
+# WHAT IS THIS FILE?
+# -------------------
+# This file tells Grafana WHERE to find pre-built dashboard JSON files.
+# Grafana reads the JSON files from the configured path and imports them
+# automatically at startup — same idea as the datasource provisioning.
+#
+# Without provisioning:
+#   - You'd manually click: + → Import → paste JSON → Save.
+#   - Every time you recreate the Grafana container, you'd lose the dashboard.
+#
+# With provisioning:
+#   - Grafana loads dashboards from disk. They persist because the folder is
+#     mounted into the container via a Docker volume.
+#   - You can version control your dashboards in git (they're just JSON files).
+#   - Production dashboards can be deployed alongside code: git push → CI redeploys.
+
+apiVersion: 1   # Grafana provisioning schema version.
+
+providers:
+  - name: "Finance Tracker Dashboards"
+    # orgId: which Grafana organization. 1 = the default organization.
+    # Grafana supports multi-tenancy (multiple orgs) — for us, 1 is fine.
+    orgId: 1
+
+    # type: how dashboards are stored. "file" = read from local filesystem.
+    # Other types: "s3" (read from AWS S3), "url" (download from URL).
+    type: "file"
+
+    # disableDeletion: if true, Grafana won't delete dashboards even if the
+    # JSON file is removed. Good for production (accidents don't wipe dashboards).
+    # false for development (cleanup is fast and predictable).
+    disableDeletion: false
+
+    # updateIntervalSeconds: how often Grafana re-reads the dashboard files.
+    # 10 seconds means: edit the JSON file → see changes in Grafana within 10s.
+    # Great for dashboard development — no restart needed.
+    updateIntervalSeconds: 10
+
+    # allowUiUpdates: allow editing dashboards in the Grafana UI.
+    # true = changes in UI are reflected on disk (via the volume mount).
+    # false = UI is read-only, changes only via JSON file (safer for prod).
+    allowUiUpdates: true
+
+    options:
+      # path: the directory inside the Grafana container where dashboards live.
+      # This path is mounted from monitoring/grafana/dashboards/ on your host
+      # via the volumes section in docker-compose.yml.
+      path: "/var/lib/grafana/dashboards"

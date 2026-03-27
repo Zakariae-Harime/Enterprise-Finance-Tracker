@@ -1,0 +1,124 @@
+# monitoring/prometheus.yml
+
+# This is the configuration file for the Prometheus server.
+# Prometheus is a time-series database that PULLS metrics from targets.
+# Every 15 seconds, Prometheus sends GET /metrics to each target and stores
+# the result in its internal database (on disk, not Redis or PostgreSQL).
+#
+# USER STORY
+# -----------
+# "As a DevOps engineer, I want to see a graph of P99 latency over the last
+#  24 hours, so I can tell if last night's deployment made things faster or slower."
+#
+# PULL MODEL (important interview concept)
+# ----------------------------------------
+# Prometheus PULLS from your app (GET /metrics). Your app does NOT push.
+# Advantage: Prometheus controls the schedule — one misconfigured app cannot
+# flood Prometheus with data. If a target goes down, Prometheus records 0
+# instead of just not receiving anything (which would be ambiguous).
+#
+# HOW DATA FLOWS
+# ---------------
+# FastAPI app           →  Prometheus server  →  Grafana dashboard
+# (exposes /metrics)      (scrapes every 15s)   (queries Prometheus)
+
+# ── Global defaults ───────────────────────────────────────────────────────────
+global:
+  # scrape_interval: how often Prometheus fetches metrics from ALL targets.
+  # 15s is the industry standard.
+  # - Too short (1s): network noise, disk fills fast with high-cardinality metrics.
+  # - Too long (60s): you miss spikes shorter than 1 minute (e.g., a 30-second outage).
+  scrape_interval: 15s
+
+  # evaluation_interval: how often Prometheus evaluates alerting rules.
+  # Must be ≤ scrape_interval, otherwise you'd evaluate rules before new data arrives.
+  # Set equal to scrape_interval so alerts trigger within one scrape cycle.
+  evaluation_interval: 15s
+
+  # scrape_timeout: max time to wait for one target to respond.
+  # After 10s with no response, Prometheus records a scrape failure.
+  # Separate from your HTTP timeout — this is Prometheus's patience, not the app's.
+  scrape_timeout: 10s
+
+  # external_labels: key-value pairs attached to ALL metrics from this Prometheus.
+  # Useful when you have multiple Prometheus servers (dev, staging, prod).
+  # In Grafana, you can filter by environment="development" to see only local data.
+  external_labels:
+    environment: "development"
+    project: "finance_tracker"
+
+# ── Alerting — where to send firing alerts ────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            # Alertmanager runs on port 9093.
+            # When a rule fires (e.g., error rate > 1%), Prometheus POSTs the alert
+            # to this address. Alertmanager then routes it to Slack/PagerDuty.
+            - alertmanager:9093
+
+# ── Rule files — alert definitions ────────────────────────────────────────────
+rule_files:
+  # alert_rules.yml contains PromQL expressions that define when to fire alerts.
+  # Prometheus loads this file at startup AND re-evaluates every evaluation_interval.
+  # If you change the file while Prometheus is running: docker-compose kill -s HUP prometheus
+  - "/etc/prometheus/alert_rules.yml"
+
+# ── Scrape configs — WHO to pull metrics from ─────────────────────────────────
+scrape_configs:
+  # ── Target 1: The Finance Tracker FastAPI API ─────────────────────────────
+  - job_name: "finance_tracker_api"
+    # job_name becomes a label on every metric: {job="finance_tracker_api"}
+    # In Grafana, filter by job to separate API metrics from DB metrics.
+
+    # static_configs: hardcoded list of targets (no service discovery).
+    # In production: use consul_sd_configs or kubernetes_sd_configs instead,
+    # so new instances are discovered automatically when you scale to 3 replicas.
+    static_configs:
+      - targets:
+          # "api" is the Docker service name — resolves to the container's IP.
+          # Port 8000 is where FastAPI listens.
+          # Prometheus will GET http://api:8000/metrics every 15 seconds.
+          - "api:8000"
+        labels:
+          # Extra labels attached to every metric from this target.
+          # {job="finance_tracker_api", service="api"} in every time series.
+          service: "api"
+
+    # metrics_path: the URL path Prometheus GETs. Default is /metrics.
+    # Our FastAPI app exposes metrics at /metrics (set up in main.py).
+    metrics_path: "/metrics"
+
+    # Uses the global scrape_interval (15s).
+    # A per-target override must be > scrape_timeout. Since global scrape_timeout=10s,
+    # a 5s override would violate that constraint and crash Prometheus on startup.
+
+  # ── Target 2: Prometheus itself ──────────────────────────────────────────
+  - job_name: "prometheus"
+    # Prometheus exposes its OWN internal metrics at localhost:9090/metrics.
+    # Scraping itself lets you monitor:
+    #   - prometheus_tsdb_head_samples_appended_total (ingestion rate)
+    #   - prometheus_rule_evaluation_duration_seconds (alert eval speed)
+    #   - prometheus_target_scrape_pool_targets (how many targets are active)
+    # Why? If Prometheus itself is struggling (disk full, OOM), you want to know.
+    static_configs:
+      - targets:
+          - "localhost:9090"
+
+  # ── Target 3: Redis ───────────────────────────────────────────────────────
+  # Redis doesn't expose Prometheus metrics natively.
+  # The redis_exporter sidecar connects to Redis and translates its INFO
+  # command output into Prometheus format at :9121/metrics.
+  # Tracks: memory usage, hit rate, connected clients, evictions.
+  # (Commented out — requires adding redis_exporter service to docker-compose)
+  # - job_name: "redis"
+  #   static_configs:
+  #     - targets: ["redis-exporter:9121"]
+
+  # ── Target 4: PostgreSQL ──────────────────────────────────────────────────
+  # Same pattern as Redis — postgres_exporter connects to PG and exposes metrics.
+  # Tracks: active connections, deadlocks, replication lag, table bloat.
+  # (Commented out — requires adding postgres_exporter to docker-compose)
+  # - job_name: "postgresql"
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]

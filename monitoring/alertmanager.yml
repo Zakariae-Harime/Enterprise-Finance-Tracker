@@ -1,0 +1,197 @@
+# monitoring/alertmanager.yml
+#
+# WHAT IS THIS FILE?
+# -------------------
+# Alertmanager receives firing alerts FROM Prometheus and routes them to
+# the right destination (Slack, PagerDuty, email, webhook, etc.).
+#
+# HOW THE PIPELINE WORKS
+# -----------------------
+# 1. Prometheus evaluates alert_rules.yml every 15 seconds.
+# 2. When an alert fires, Prometheus POSTs it to Alertmanager at port 9093.
+# 3. Alertmanager applies:
+#    a. GROUPING — bundles related alerts into one notification (not 50 individual pings).
+#    b. INHIBITION — suppresses low-priority alerts when high-priority ones are firing
+#       (e.g., don't alert "high latency" if the service is completely DOWN).
+#    c. SILENCING — manually mute alerts during planned maintenance.
+#    d. ROUTING — sends to the right team/channel based on labels.
+# 4. Receiver sends the notification (Slack message, PagerDuty incident, etc.).
+#
+# KEY CONCEPT: INHIBITION
+# ------------------------
+# If "APIServiceDown" is firing (severity=critical), we DON'T want to also receive
+# "HighP99Latency" (severity=warning). Of course latency is high — the service is down!
+# Inhibition rules suppress child alerts when parent alerts are already firing.
+#
+# USER STORY
+# -----------
+# "As an on-call engineer, I want critical alerts to page me on PagerDuty,
+#  and warning alerts to post to our Slack #alerts channel, so I know what
+#  wakes me up at 3am vs what I check in the morning."
+
+# ── Global settings ────────────────────────────────────────────────────────────
+global:
+  # resolve_timeout: after an alert stops firing, Alertmanager waits this long
+  # before sending the "RESOLVED" notification. Prevents flapping notifications
+  # if the alert briefly stops and restarts.
+  resolve_timeout: 5m
+
+  # SLACK INTEGRATION SETUP (replace with your real webhook URL)
+  # How to get a Slack webhook:
+  # 1. Go to https://api.slack.com/apps → Create new app → Incoming Webhooks
+  # 2. Enable Incoming Webhooks → Add to workspace → choose channel
+  # 3. Copy the webhook URL (starts with https://hooks.slack.com/services/...)
+  # 4. Replace the placeholder below with your real URL.
+  # In production: store this in a secret manager (AWS Secrets Manager, Vault)
+  # and inject via environment variable. Never commit real webhooks to git.
+  slack_api_url: "https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN"
+
+# ── Routing tree ──────────────────────────────────────────────────────────────
+# The routing tree decides WHERE each alert goes.
+# Alerts flow from the root route downward. The FIRST matching child route wins.
+# If no child matches, the root route handles it (fallback).
+#
+# Think of it like a series of if/else if/else:
+#   if severity == "critical":   → pagerduty
+#   elif team == "backend":      → slack-backend
+#   else:                        → slack-default (fallback)
+route:
+  # group_by: which labels make alerts "the same group".
+  # [alertname, severity, job] means: bundle all alerts with the same name + severity + job
+  # into one notification. Without grouping, 10 instances failing → 10 separate pings.
+  group_by: ["alertname", "severity", "job"]
+
+  # group_wait: when a new group forms, wait this long before sending.
+  # Why wait? More alerts might arrive for the same group in the next 30 seconds.
+  # Bundling them = one notification instead of 3.
+  group_wait: 30s
+
+  # group_interval: for an EXISTING group, wait this long between notifications.
+  # Prevents spam: if the alert keeps firing, don't re-notify every 15 seconds.
+  # Every 5 minutes is the standard — frequent enough to not miss it, not so frequent
+  # that it becomes noise.
+  group_interval: 5m
+
+  # repeat_interval: if the alert is still firing, repeat the notification.
+  # Every 4 hours: nudge the on-call engineer if they haven't resolved it yet.
+  # For critical alerts, you might lower this to 1 hour.
+  repeat_interval: 4h
+
+  # receiver: the DEFAULT receiver (fallback if no child route matches).
+  receiver: "slack-default"
+
+  # ── Child routes (evaluated top-to-bottom, first match wins) ───────────────
+  routes:
+    # Route 1: critical severity → PagerDuty (wakes on-call)
+    - match:
+        severity: "critical"  # exact label match
+      receiver: "pagerduty-oncall"
+      # continue: false (default) — stop evaluating after this match.
+      # Set continue: true to send to BOTH PagerDuty AND Slack.
+      continue: true  # also continue to check next routes
+
+    # Route 2: backend team → backend Slack channel
+    - match:
+        team: "backend"
+      receiver: "slack-backend"
+
+# ── Inhibition rules ──────────────────────────────────────────────────────────
+# "If alert A is firing, suppress alert B."
+# This prevents alert storms where one root cause triggers 5 child alerts.
+inhibit_rules:
+  # If the API is DOWN (critical), suppress latency/error rate warnings.
+  # Rationale: of course latency is high if the service is down.
+  # The latency alert adds noise without adding information.
+  - source_match:
+      alertname: "APIServiceDown"    # if THIS alert is firing...
+      severity: "critical"
+    target_match:
+      severity: "warning"            # ...suppress all WARNING-level alerts
+    # equal: both alerts must have the same value for these labels to apply inhibition.
+    # This ensures we only suppress alerts about the SAME job/service,
+    # not warnings from unrelated services.
+    equal: ["job"]
+
+# ── Receivers ─────────────────────────────────────────────────────────────────
+# Receivers define HOW notifications are sent.
+# Each receiver has a name and one or more notification configs.
+receivers:
+  # ── Default receiver (fallback) ────────────────────────────────────────────
+  - name: "slack-default"
+    slack_configs:
+      - channel: "#alerts"    # Slack channel name (with #)
+        # send_resolved: also send a message when the alert stops firing.
+        # "RESOLVED: HighErrorRate" lets you know the incident is over.
+        send_resolved: true
+
+        # title: the bold heading of the Slack message.
+        # {{ range .Alerts }} iterates over all alerts in the group.
+        # {{ .Labels.alertname }} is the alert name label.
+        # {{ .Annotations.summary }} is the human-readable summary from alert_rules.yml.
+        title: >-
+          {{ range .Alerts }}[{{ .Status | toUpper }}] {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ end }}
+
+        # text: the body of the Slack message (Markdown supported).
+        # {{ .CommonLabels.job }} = label shared by all alerts in this group.
+        # {{ range .Alerts }}...{{ end }} loops over each alert in the group.
+        text: >-
+          *Job:* {{ .CommonLabels.job }}
+          {{ range .Alerts }}
+          *Alert:* {{ .Labels.alertname }} ({{ .Labels.severity }})
+          *Description:* {{ .Annotations.description }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+
+        # color: sidebar color (green=resolved, red=firing, yellow=warning).
+        # '{{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}{{ else }}good{{ end }}'
+        color: >-
+          {{ if eq .Status "firing" }}
+            {{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}
+          {{ else }}good{{ end }}
+
+  # ── Backend team Slack channel ─────────────────────────────────────────────
+  - name: "slack-backend"
+    slack_configs:
+      - channel: "#backend-alerts"
+        send_resolved: true
+        title: >-
+          {{ range .Alerts }}[{{ .Status | toUpper }}] {{ .Labels.alertname }}: {{ .Annotations.summary }}{{ end }}
+        text: >-
+          *Environment:* development
+          *Job:* {{ .CommonLabels.job }}
+          {{ range .Alerts }}
+          *Severity:* {{ .Labels.severity }}
+          *Description:* {{ .Annotations.description }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+
+  # ── PagerDuty (on-call escalation) ────────────────────────────────────────
+  # HOW TO SET UP PAGERDUTY:
+  # 1. Sign up at https://www.pagerduty.com (free trial available)
+  # 2. Create a Service → Integrations → Add Prometheus integration
+  # 3. Copy the Integration Key (32-character hex string)
+  # 4. Replace "YOUR_PAGERDUTY_INTEGRATION_KEY" below
+  #
+  # What PagerDuty does with critical alerts:
+  # - Creates an incident immediately
+  # - Pages the on-call engineer (phone call, SMS, push notification)
+  # - Escalates to the backup if not acknowledged within 30 minutes
+  # - Tracks MTTD (mean time to detect) and MTTR (mean time to resolve)
+  - name: "pagerduty-oncall"
+    pagerduty_configs:
+      - routing_key: "YOUR_PAGERDUTY_INTEGRATION_KEY"
+        # description: shown in the PagerDuty incident title.
+        description: >-
+          {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+        # severity: maps Alertmanager severity to PagerDuty severity.
+        # PagerDuty levels: critical, error, warning, info.
+        severity: >-
+          {{ .CommonLabels.severity }}
+        # details: key-value pairs shown in PagerDuty incident details panel.
+        details:
+          job: "{{ .CommonLabels.job }}"
+          environment: "development"
+          description: >-
+            {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          runbook: >-
+            {{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}
